@@ -5,6 +5,8 @@ import objax
 from objax.variable import TrainVar
 from jax.nn.initializers import glorot_normal, he_normal
 from jax.nn.functions import gelu
+from PIL import Image
+import numpy as np
 
 
 def _conv_layer(stride, activation, inp, kernel, bias):
@@ -80,7 +82,7 @@ class Unet(objax.Module):
             glorot_normal()(key(), (1, 1, 8, 1)))
         self.logits_conv_bias = TrainVar(jnp.zeros((1,)))
 
-    def dither(self, img):
+    def dither_logits(self, img):
         y = img
 #         print("inp", y.shape)
 
@@ -107,3 +109,9 @@ class Unet(objax.Module):
         # print(logits.shape)
 
         return logits
+
+    def dither_output(self, img):
+        pred_dither = self.dither_logits(img)
+        lit_pixels = pred_dither[0, :, :, 0] > 0
+        lit_pixels = jnp.where(lit_pixels, 255, 0).astype(jnp.uint8)
+        return Image.fromarray(np.array(lit_pixels), 'L')
