@@ -1,0 +1,109 @@
+
+import jax
+import jax.numpy as jnp
+import objax
+from objax.variable import TrainVar
+from jax.nn.initializers import glorot_normal, he_normal
+from jax.nn.functions import gelu
+
+
+def _conv_layer(stride, activation, inp, kernel, bias):
+    no_dilation = (1, 1)
+    some_height_width = 10  # values don't matter; just shape of input
+    input_shape = (1, some_height_width, some_height_width, 3)
+    kernel_shape = (3, 3, 1, 1)
+    input_kernel_output = ('NHWC', 'HWIO', 'NHWC')
+    conv_dimension_numbers = jax.lax.conv_dimension_numbers(input_shape,
+                                                            kernel_shape,
+                                                            input_kernel_output)
+    block = jax.lax.conv_general_dilated(inp, kernel, (stride, stride),
+                                         'SAME', no_dilation, no_dilation,
+                                         conv_dimension_numbers)
+    if bias is not None:
+        block += bias
+    if activation:
+        block = activation(block)
+    return block
+
+
+def _upsample_nearest_neighbour(inputs):
+    input_channels = inputs.shape[-1]
+    inputs_nchw = jnp.transpose(inputs, (0, 3, 1, 2))
+    flat_inputs_shape = (-1, inputs.shape[1], inputs.shape[2], 1)
+    flat_inputs = jnp.reshape(inputs_nchw, flat_inputs_shape)
+
+    resize_kernel = jnp.ones((2, 2, 1, 1))
+    strides = (2, 2)
+    flat_outputs = jax.lax.conv_transpose(
+        flat_inputs, resize_kernel, strides, padding="SAME")
+
+    outputs_nchw_shape = (-1, input_channels, 2 *
+                          inputs.shape[1], 2 * inputs.shape[2])
+    outputs_nchw = jnp.reshape(flat_outputs, outputs_nchw_shape)
+    return jnp.transpose(outputs_nchw, (0, 2, 3, 1))
+
+
+class Unet(objax.Module):
+    def __init__(self):
+
+        key = objax.random.Generator(123)
+
+        self.enc_conv_kernels = objax.ModuleList()
+        self.enc_conv_biases = objax.ModuleList()
+        num_channels = 3
+        # TODO: drop i here
+        for i, num_output_channels in enumerate([16, 32, 64, 128, 256]):
+            self.enc_conv_kernels.append(TrainVar(
+                he_normal()(key(), (3, 3, num_channels, num_output_channels))))
+            self.enc_conv_biases.append(
+                TrainVar(jnp.zeros((num_output_channels,))))
+            num_channels = num_output_channels
+
+        self.dec_conv_kernels = objax.ModuleList()
+        self.dec_conv_biases = objax.ModuleList()
+        for i, num_output_channels in enumerate([128, 64, 32, 16, 8]):
+            self.dec_conv_kernels.append(TrainVar(
+                he_normal()(key(), (3, 3, num_channels, num_output_channels))))
+            self.dec_conv_biases.append(
+                TrainVar(jnp.zeros((num_output_channels,))))
+            num_channels = num_output_channels
+
+#         self.enc_dec_conv_kernels = objax.ModuleList()
+#         self.enc_dec_conv_biases = objax.ModuleList()
+#         for i, num_output_channels in enumerate([256, 128, 64, 32, 16]):
+#             self.enc_dec_conv_kernels.append(TrainVar(
+#                 he_normal()(key(), (3, 3, num_channels, num_output_channels))))
+#             self.enc_dec_conv_biases.append(TrainVar(jnp.zeros((num_output_channels,))))
+#             num_channels = num_output_channels
+
+        self.logits_conv_kernel = TrainVar(
+            glorot_normal()(key(), (1, 1, 8, 1)))
+        self.logits_conv_bias = TrainVar(jnp.zeros((1,)))
+
+    def dither(self, img):
+        y = img
+#         print("inp", y.shape)
+
+        encoded = []
+        for k, b in zip(self.enc_conv_kernels, self.enc_conv_biases):
+            y = _conv_layer(2, gelu, y, k.value, b.value)
+            encoded.append(y)
+#             print(y.shape)
+
+        for d, (k, b) in enumerate(zip(self.dec_conv_kernels,
+                                       self.dec_conv_biases)):
+            upsampled = _upsample_nearest_neighbour(y)
+            y = _conv_layer(1, gelu, upsampled, k.value, b.value)
+#             if d < len(self.dec_conv_kernels)-1:
+#                 print("d", d, y.shape, encoded[3-d].shape)
+#                 y = jnp.concatenate([y, encoded[3-d]], axis=3)
+#                 print("d+e", d, y.shape)
+#             else:
+#             print("d", d, y.shape)
+
+        logits = _conv_layer(1, None, y,
+                             self.logits_conv_kernel.value,
+                             self.logits_conv_bias.value)
+        # print(logits.shape)
+
+        return logits
