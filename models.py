@@ -54,7 +54,7 @@ class Unet(objax.Module):
         self.enc_conv_biases = objax.ModuleList()
         num_channels = 3
         # TODO: drop i here
-        for i, num_output_channels in enumerate([16, 32, 64, 128, 256]):
+        for i, num_output_channels in enumerate([32, 64, 128, 256, 256]):
             self.enc_conv_kernels.append(TrainVar(
                 he_normal()(key(), (3, 3, num_channels, num_output_channels))))
             self.enc_conv_biases.append(
@@ -63,7 +63,7 @@ class Unet(objax.Module):
 
         self.dec_conv_kernels = objax.ModuleList()
         self.dec_conv_biases = objax.ModuleList()
-        for i, num_output_channels in enumerate([128, 64, 32, 16, 8]):
+        for i, num_output_channels in enumerate([256, 128, 64, 32, 16]):
             self.dec_conv_kernels.append(TrainVar(
                 he_normal()(key(), (3, 3, num_channels, num_output_channels))))
             self.dec_conv_biases.append(
@@ -79,7 +79,7 @@ class Unet(objax.Module):
 #             num_channels = num_output_channels
 
         self.logits_conv_kernel = TrainVar(
-            glorot_normal()(key(), (1, 1, 8, 1)))
+            glorot_normal()(key(), (1, 1, num_channels, 1)))
         self.logits_conv_bias = TrainVar(jnp.zeros((1,)))
 
     def dither_logits(self, img):
