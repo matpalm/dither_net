@@ -72,7 +72,7 @@ class Unet(objax.Module):
 
         self.dec_skip_conv_kernels = objax.ModuleList()
         self.dec_skip_conv_biases = objax.ModuleList()
-        for channels in [256, 128, 64, 32, 16]:
+        for channels in [256, 128, 64, 32]:
             self.dec_skip_conv_kernels.append(TrainVar(
                 he_normal()(key(), (3, 3, 2*channels, channels))))
             self.dec_skip_conv_biases.append(
