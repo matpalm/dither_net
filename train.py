@@ -5,8 +5,13 @@ from objax.functional.loss import sigmoid_cross_entropy_logits
 from PIL import Image
 import numpy as np
 import util as u
+import wandb
 
-F = 5000
+
+wandb.init(project='dither_net', group='v1', name=u.DTS())
+
+
+F = 72000
 
 rgb_img = Image.open("imgs/c/c_%07d.png" % F).resize((1440, 1056))
 true_dither = rgb_img.convert(mode='1', dither=Image.FLOYDSTEINBERG)
@@ -42,18 +47,25 @@ def train_step(learning_rate, rgb_img, true_dither):
 train_step = objax.Jit(train_step,
                        gradient_loss.vars() + optimiser.vars())
 
-lr = 1e-3
+learning_rate = 1e-3
 improvement_tracking = u.ImprovementTracking(smoothing=0.1)
 
-for i in range(1000):
+for i in range(100):
+    print(">", i)
 
     for _ in range(100):
-        train_step(lr, rgb_img, true_dither)
+        train_step(learning_rate, rgb_img, true_dither)
 
-    loss = cross_entropy(rgb_img, true_dither)
+    loss = float(cross_entropy(rgb_img, true_dither))
+    sample_dithered_img = unet.dither_output(rgb_img)
+
+    wandb.log({'loss': loss,
+               'learning_rate': learning_rate,
+               'eg_img': [wandb.Image(sample_dithered_img, caption="Label")]},
+              step=i)
+
     if not improvement_tracking.improved(loss):
-        lr /= 2
+        learning_rate /= 2
         improvement_tracking.reset()
 
-    print(i, lr, loss)
-    unet.dither_output(rgb_img).save("test_%03d.png" % i)
+    print(i, learning_rate, loss)
