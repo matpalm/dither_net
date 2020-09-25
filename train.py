@@ -7,8 +7,9 @@ import numpy as np
 import util as u
 import wandb
 
+RUN = u.DTS()
 
-wandb.init(project='dither_net', group='v1', name=u.DTS())
+wandb.init(project='dither_net', group='v1', name=RUN)
 
 
 F = 72000
@@ -39,27 +40,42 @@ gradient_loss = objax.GradValues(cross_entropy, unet.vars())
 optimiser = objax.optimizer.Adam(unet.vars())
 
 
+def clip_gradients(grads, theta):
+    total_grad_norm = jnp.linalg.norm([jnp.linalg.norm(g) for g in grads])
+    scale_factor = jnp.minimum(theta / total_grad_norm, 1.)
+    return [g * scale_factor for g in grads]
+
+
 def train_step(learning_rate, rgb_img, true_dither):
     grads, _loss = gradient_loss(rgb_img, true_dither)
+    grads = clip_gradients(grads, 1)
+    grad_norms = [jnp.linalg.norm(g) for g in grads]
     optimiser(learning_rate, grads)
+    return grad_norms
 
 
 train_step = objax.Jit(train_step,
                        gradient_loss.vars() + optimiser.vars())
 
 learning_rate = 1e-3
-improvement_tracking = u.ImprovementTracking(smoothing=0.1)
+improvement_tracking = u.ImprovementTracking(patience=10, smoothing=0.1)
 
-for i in range(100):
-    print(">", i)
+u.ensure_dir_exists(f"test/{RUN}/")
+for i in range(1000):
 
+    g_min = 1e6
+    g_max = 0
     for _ in range(100):
-        train_step(learning_rate, rgb_img, true_dither)
+        grad_norms = train_step(learning_rate, rgb_img, true_dither)
+        g_min = min(g_min, float(jnp.min(grad_norms)))
+        g_max = max(g_max, float(jnp.max(grad_norms)))
 
     loss = float(cross_entropy(rgb_img, true_dither))
-    sample_dithered_img = unet.dither_output(rgb_img)
 
-    wandb.log({'loss': loss,
+    sample_dithered_img = unet.dither_output(rgb_img)
+    sample_dithered_img.save("test/%s/test_%05d.png" % (RUN, i))
+
+    wandb.log({'loss': loss, 'g_min': g_min, 'g_max': g_max,
                'learning_rate': learning_rate,
                'eg_img': [wandb.Image(sample_dithered_img, caption="Label")]},
               step=i)
@@ -68,4 +84,4 @@ for i in range(100):
         learning_rate /= 2
         improvement_tracking.reset()
 
-    print(i, learning_rate, loss)
+    print("i", i, "lr", learning_rate, "g_min max", g_min, g_max, "loss", loss)

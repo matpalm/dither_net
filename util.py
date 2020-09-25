@@ -6,6 +6,11 @@ def DTS():
     return datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
 
+def ensure_dir_exists(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+
 class ImprovementTracking(object):
     def __init__(self, patience=3, burn_in=5, max_runtime=None,
                  smoothing=0.0):
