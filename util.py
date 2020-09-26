@@ -3,6 +3,7 @@ import datetime
 import numpy as np
 from PIL import Image
 import os
+import math
 
 
 def DTS():
@@ -18,6 +19,17 @@ def dither_to_pil_image(dither):
     lit_pixels = dither[:, :, 0] > 0
     lit_pixels = np.where(lit_pixels, 255, 0).astype(np.uint8)
     return Image.fromarray(np.array(lit_pixels), 'L')
+
+
+def collage(pil_imgs):
+    # assume all imgs same (w, h)
+    w, h = pil_imgs[0].size
+    n = math.ceil(math.sqrt(len(pil_imgs)))
+    collage = Image.new('RGB', (n*w, n*h))
+    for idx, img in enumerate(pil_imgs):
+        r, c = idx % n, idx // n
+        collage.paste(img, (r*w, c*h))
+    return collage
 
 
 class ImprovementTracking(object):

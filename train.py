@@ -6,24 +6,22 @@ from PIL import Image
 import numpy as np
 import util as u
 import wandb
-#import data
+import data
 
 RUN = u.DTS()
+FRAMES = [5000, 6500, 72000, 137000]
+
+rgb_img = []
+true_dither = []
+for F in FRAMES:
+    rgb, dither = data.parse("frames/f_%08d.jpg" % F)
+    rgb_img.append(rgb)
+    true_dither.append(dither)
+rgb_img = jnp.stack(rgb_img)
+true_dither = jnp.stack(true_dither)
 
 wandb.init(project='dither_net', group='v1', name=RUN)
 
-F = 72000
-
-rgb_img = Image.open("imgs/c/c_%07d.png" % F).resize((1440, 1056))
-true_dither = rgb_img.convert(mode='1', dither=Image.FLOYDSTEINBERG)
-
-rgb_img = np.array(rgb_img, dtype=np.float32)
-rgb_img /= 255.
-rgb_img = np.expand_dims(rgb_img, 0)  # single elem batch
-
-true_dither = np.array(true_dither, dtype=np.float32)
-true_dither = np.expand_dims(true_dither, -1)  # single channel
-true_dither = np.expand_dims(true_dither, 0)   # single elem batch
 
 unet = models.Unet()
 
@@ -38,7 +36,7 @@ def cross_entropy(rgb_img, true_dither):
 gradient_loss = objax.GradValues(cross_entropy, unet.vars())
 
 optimiser = objax.optimizer.Adam(unet.vars())
-#optimiser = objax.optimizer.Momentum(unet.vars(), momentum=0.1, nesterov=True)
+# optimiser = objax.optimizer.Momentum(unet.vars(), momentum=0.1, nesterov=True)
 
 
 def clip_gradients(grads, theta):
@@ -59,9 +57,11 @@ train_step = objax.Jit(train_step,
                        gradient_loss.vars() + optimiser.vars())
 
 learning_rate = 1e-3
-improvement_tracking = u.ImprovementTracking(patience=10, smoothing=0.5)
+# improvement_tracking = u.ImprovementTracking(patience=10, smoothing=0.5)
 
-u.ensure_dir_exists(f"test/{RUN}/")
+# for debug images
+u.ensure_dir_exists("test/%s" % RUN)
+
 for i in range(300):
 
     g_min = 1e6
@@ -73,18 +73,23 @@ for i in range(300):
         g_min = min(g_min, float(jnp.min(grad_norms)))
         g_max = max(g_max, float(jnp.max(grad_norms)))
 
+    # check loss against sample images
     loss = float(cross_entropy(rgb_img, true_dither))
 
-    sample_dithered_img = unet.dither_output(rgb_img)
-    sample_dithered_img.save("test/%s/test_%05d.png" % (RUN, i))
+    # save dithers to disk
+    sample_dithered_img = unet.dithers_as_pil(rgb_img)
+    u.collage(sample_dithered_img).save("test/%s/%05d.png" % (RUN, i))
 
+    # and prep images for wandb logging
+    wand_imgs = []
+    for d, f in zip(sample_dithered_img, FRAMES):
+        wand_imgs.append(wandb.Image(d, caption="f_%05d" % f))
     wandb.log({'loss': loss, 'g_min': g_min, 'g_max': g_max,
                'learning_rate': learning_rate,
-               'eg_img': [wandb.Image(sample_dithered_img, caption="Label")]},
-              step=i)
+               'eg_img': wand_imgs}, step=i)
 
-    if not improvement_tracking.improved(loss):
-        learning_rate /= 2
-        improvement_tracking.reset()
+    # if not improvement_tracking.improved(loss):
+    #     learning_rate /= 2
+    #     improvement_tracking.reset()
 
     print("i", i, "lr", learning_rate, "g_min max", g_min, g_max, "loss", loss)

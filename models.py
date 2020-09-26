@@ -7,6 +7,7 @@ from jax.nn.initializers import glorot_normal, he_normal
 from jax.nn.functions import gelu
 from PIL import Image
 import numpy as np
+import util as u
 
 
 def _conv_layer(stride, activation, kernel_size, inp, kernel, bias):
@@ -124,8 +125,5 @@ class Unet(objax.Module):
 
         return logits
 
-    def dither_output(self, img):
-        pred_dither = self.dither_logits(img)
-        lit_pixels = pred_dither[0, :, :, 0] > 0
-        lit_pixels = jnp.where(lit_pixels, 255, 0).astype(jnp.uint8)
-        return Image.fromarray(np.array(lit_pixels), 'L')
+    def dithers_as_pil(self, imgs):
+        return [u.dither_to_pil_image(d) for d in self.dither_logits(imgs)]
