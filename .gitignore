@@ -3,4 +3,5 @@ imgs/
 __pycache__/
 .ipynb_checkpoints/
 wandb/
-frames/
+frames/frames
+test/

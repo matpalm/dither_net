@@ -1,5 +1,5 @@
 
-import glob
+
 from PIL import Image
 import numpy as np
 import random
@@ -22,9 +22,9 @@ def parse(fname):
     return rgb_img, true_dither
 
 
-def dataset(fname_glob, batch_size):
+def dataset(manifest_file, batch_size):
     def fnames():
-        fnames = glob.glob(fname_glob)
+        fnames = list(map(str.strip, open(manifest_file).readlines()))
         random.shuffle(fnames)
         for fname in fnames:
             yield parse(fname)
@@ -33,9 +33,3 @@ def dataset(fname_glob, batch_size):
                                            output_types=(tf.float32, tf.float32))
             .batch(batch_size)
             .prefetch(AUTOTUNE))
-
-
-# for rgb, td in dataset(batch_size=4):
-#     print(rgb.shape, td.shape)
-#     u.dither_to_pil_image(td[0]).show()
-#     break

@@ -97,7 +97,7 @@ class Unet(objax.Module):
                             self.enc_conv_kernels[e].value,
                             self.enc_conv_biases[e].value)
             encoded.append(y)
-            # print(y.shape)
+            # print("e", e, y.shape)
 
         for d in range(5):
 
@@ -114,7 +114,7 @@ class Unet(objax.Module):
                 y = _conv_layer(1, gelu, 3, y,
                                 self.dec_skip_conv_kernels[d].value,
                                 self.dec_skip_conv_biases[d].value)
-                # print("d+e_2", d, y.shape)
+            #     print("d+e_2", d, y.shape)
             # else:
             #     print("d", d, y.shape)
 
