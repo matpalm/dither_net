@@ -11,7 +11,7 @@ from functools import lru_cache
 # TODO: pack to TFRECORD eventually...
 
 
-@lru_cache(None)
+# @lru_cache(None)
 def parse(fname):
     rgb_img = Image.open(fname)
     true_dither = rgb_img.convert(mode='1', dither=Image.FLOYDSTEINBERG)

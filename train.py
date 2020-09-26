@@ -14,6 +14,7 @@ parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--manifest-file', type=str)
 parser.add_argument('--batch-size', type=int)
+parser.add_argument('--gradient-clip', type=float, default=1.0)
 opts = parser.parse_args()
 print(opts)
 
@@ -39,7 +40,7 @@ optimiser = objax.optimizer.Adam(unet.vars())
 
 def train_step(learning_rate, rgb_img, true_dither):
     grads, _loss = gradient_loss(rgb_img, true_dither)
-    grads = clip_gradients(grads, 1)
+    grads = clip_gradients(grads, theta=opts.gradient_clip)
     optimiser(learning_rate, grads)
 
 
@@ -51,7 +52,7 @@ def clip_gradients(grads, theta):
 
 def train_step_with_grad_norms(learning_rate, rgb_img, true_dither):
     grads, _loss = gradient_loss(rgb_img, true_dither)
-    grads = clip_gradients(grads, theta=1)
+    grads = clip_gradients(grads, theta=opts.gradient_clip)
     optimiser(learning_rate, grads)
     grad_norms = [jnp.linalg.norm(g) for g in grads]
     return grad_norms
@@ -74,7 +75,7 @@ sample_batch_rgb = None
 for i in range(10000):
 
     g_min_max = None
-    for _ in range(100):
+    for _ in range(10):
         dataset = data.dataset(manifest_file=opts.manifest_file,
                                batch_size=opts.batch_size)
         for rgb_imgs, true_dithers in dataset:
@@ -83,6 +84,7 @@ for i in range(10000):
             # grab first batch as a sample batch for use over entire training
             if sample_batch_rgb is None:
                 sample_batch_rgb = rgb_imgs
+                #u.collage(sample_batch_rgb).save("test/%s/rgb.png" % RUN)
             # collect grad norms for first step, once per epoch
             if g_min_max is None:
                 grad_norms = train_step_with_grad_norms(
