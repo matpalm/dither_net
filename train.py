@@ -6,11 +6,11 @@ from PIL import Image
 import numpy as np
 import util as u
 import wandb
+#import data
 
 RUN = u.DTS()
 
 wandb.init(project='dither_net', group='v1', name=RUN)
-
 
 F = 72000
 
@@ -38,6 +38,7 @@ def cross_entropy(rgb_img, true_dither):
 gradient_loss = objax.GradValues(cross_entropy, unet.vars())
 
 optimiser = objax.optimizer.Adam(unet.vars())
+#optimiser = objax.optimizer.Momentum(unet.vars(), momentum=0.1, nesterov=True)
 
 
 def clip_gradients(grads, theta):
@@ -58,14 +59,16 @@ train_step = objax.Jit(train_step,
                        gradient_loss.vars() + optimiser.vars())
 
 learning_rate = 1e-3
-improvement_tracking = u.ImprovementTracking(patience=10, smoothing=0.1)
+improvement_tracking = u.ImprovementTracking(patience=10, smoothing=0.5)
 
 u.ensure_dir_exists(f"test/{RUN}/")
-for i in range(1000):
+for i in range(300):
 
     g_min = 1e6
     g_max = 0
     for _ in range(100):
+        # for rgb_imgs, true_dithers in data.dataset(fname_glob='imgs/c2/*png',
+        #                                            batch_size=4):
         grad_norms = train_step(learning_rate, rgb_img, true_dither)
         g_min = min(g_min, float(jnp.min(grad_norms)))
         g_max = max(g_max, float(jnp.max(grad_norms)))

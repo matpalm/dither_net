@@ -1,5 +1,8 @@
 import time
 import datetime
+import numpy as np
+from PIL import Image
+import os
 
 
 def DTS():
@@ -9,6 +12,12 @@ def DTS():
 def ensure_dir_exists(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
+
+
+def dither_to_pil_image(dither):
+    lit_pixels = dither[:, :, 0] > 0
+    lit_pixels = np.where(lit_pixels, 255, 0).astype(np.uint8)
+    return Image.fromarray(np.array(lit_pixels), 'L')
 
 
 class ImprovementTracking(object):
