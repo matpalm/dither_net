@@ -33,7 +33,7 @@ class Unet(objax.Module):
         self.enc_bn = objax.ModuleList()
         self.enc_conv = objax.ModuleList()
         k = 7
-        for num_output_channels in [32, 64, 128, 256, 512]:
+        for num_output_channels in [32, 64, 128, 256, 256]:
             self.enc_bn.append(BatchNorm2D(num_channels))
             self.enc_conv.append(Conv2D(num_channels, num_output_channels,
                                         strides=2, k=k))
@@ -70,8 +70,7 @@ class Unet(objax.Module):
 
         encoded = []
         for e_idx, (bn, conv) in enumerate(zip(self.enc_bn, self.enc_conv)):
-            #y = gelu(conv(bn(y, training)))
-            y = gelu(conv(y))
+            y = gelu(conv(bn(y, training)))
             encoded.append(y)
             if debug:
                 print("e_%d" % e_idx, y.shape)
@@ -81,8 +80,7 @@ class Unet(objax.Module):
             if debug:
                 print("up", y.shape)
 
-            #y = gelu(conv(bn(y, training)))
-            y = gelu(conv(y))
+            y = gelu(conv(bn(y, training)))
             if debug:
                 print("d_%d" % d_idx, y.shape)
 
@@ -91,13 +89,11 @@ class Unet(objax.Module):
                 if debug:
                     print("d+e_%d" % d_idx, y.shape)
                 bn, conv = self.skip_dec_bn[d_idx], self.skip_dec_conv[d_idx]
-                #y = gelu(conv(bn(y, training)))
-                y = gelu(conv(y))
+                y = gelu(conv(bn(y, training)))
                 if debug:
                     print("d+e_%d conv" % d_idx, y.shape)
 
-        #logits = self.logits(self.logits_bn(y, training))
-        logits = self.logits(y)
+        logits = self.logits(self.logits_bn(y, training))
         if debug:
             print("l", logits.shape)
         #print("return", logits.transpose((0, 2, 3, 1)).shape)

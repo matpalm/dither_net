@@ -24,9 +24,10 @@ RUN = u.DTS()
 wandb.init(project='dither_net', group='v1', name=RUN)
 
 unet = models.Unet()
+print(unet.vars())
 
 
-def cross_entropy(rgb_img, true_dither, training):
+def _cross_entropy(rgb_img, true_dither, training):
     pred_dither_logits = unet(rgb_img, training)
     per_pixel_loss = sigmoid_cross_entropy_logits(pred_dither_logits,
                                                   true_dither)
@@ -34,14 +35,14 @@ def cross_entropy(rgb_img, true_dither, training):
 
 
 def cross_entropy_non_training(rgb_img, true_dither):
-    return cross_entropy(rgb_img, true_dither, training=False)
+    return _cross_entropy(rgb_img, true_dither, training=False)
 
 
 cross_entropy_non_training = objax.Jit(cross_entropy_non_training, unet.vars())
 
 
 def cross_entropy_training(rgb_img, true_dither):
-    return cross_entropy(rgb_img, true_dither, training=True)
+    return _cross_entropy(rgb_img, true_dither, training=True)
 
 
 gradient_loss = objax.GradValues(cross_entropy_training, unet.vars())
