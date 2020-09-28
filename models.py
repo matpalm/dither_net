@@ -2,12 +2,13 @@
 import jax
 import jax.numpy as jnp
 import objax
-from objax.variable import TrainVar
-from jax.nn.initializers import glorot_normal, he_normal
+#from objax.variable import TrainVar
+from objax.nn.init import xavier_normal
 from jax.nn.functions import gelu
 from PIL import Image
 import numpy as np
 import util as u
+from objax.nn import Conv2D, BatchNorm2D
 
 
 def _upsample_nearest_neighbour(inputs_nchw):
@@ -29,61 +30,77 @@ class Unet(objax.Module):
 
         num_channels = 3
 
-        self.encoders = objax.ModuleList()
+        self.enc_bn = objax.ModuleList()
+        self.enc_conv = objax.ModuleList()
         k = 7
         for num_output_channels in [32, 64, 128, 256, 512]:
-            self.encoders.append(objax.nn.Conv2D(
-                num_channels, num_output_channels, strides=2, k=k))
+            self.enc_bn.append(BatchNorm2D(num_channels))
+            self.enc_conv.append(Conv2D(num_channels, num_output_channels,
+                                        strides=2, k=k))
             k = 3
             num_channels = num_output_channels
 
-        self.decoders = objax.ModuleList()
+        self.dec_bn = objax.ModuleList()
+        self.dec_conv = objax.ModuleList()
         for num_output_channels in [256, 128, 64, 32, 16]:
-            self.decoders.append(objax.nn.Conv2D(
-                num_channels, num_output_channels, strides=1, k=3))
+            self.dec_bn.append(BatchNorm2D(num_channels))
+            self.dec_conv.append(Conv2D(num_channels, num_output_channels,
+                                        strides=1, k=3))
             num_channels = num_output_channels
 
-        self.skip_decoders = objax.ModuleList()
+        self.skip_dec_bn = objax.ModuleList()
+        self.skip_dec_conv = objax.ModuleList()
         for channels in [256, 128, 64, 32]:
-            self.skip_decoders.append(objax.nn.Conv2D(
-                2*channels, channels, strides=1, k=1))
+            self.skip_dec_bn.append(BatchNorm2D(2*channels))
+            self.skip_dec_conv.append(Conv2D(2*channels, channels,
+                                             strides=1, k=1))
             num_channels = num_output_channels
 
-        self.logits = objax.nn.Conv2D(num_channels, nout=1, strides=1, k=1)
+        self.logits_bn = BatchNorm2D(num_channels)
+        self.logits = Conv2D(num_channels, nout=1, strides=1, k=1,
+                             w_init=xavier_normal)
 
     def __call__(self, img, training):
+        debug = False
+
         y = img.transpose((0, 3, 1, 2))
-        print_sizes = False
-        if print_sizes:
+
+        if debug:
             print("img", y.shape)
 
         encoded = []
-        for e_idx, encoder in enumerate(self.encoders):
-            y = gelu(encoder(y))
+        for e_idx, (bn, conv) in enumerate(zip(self.enc_bn, self.enc_conv)):
+            #y = gelu(conv(bn(y, training)))
+            y = gelu(conv(y))
             encoded.append(y)
-            if print_sizes:
+            if debug:
                 print("e_%d" % e_idx, y.shape)
 
-        for d_idx in range(len(self.decoders)):
+        for d_idx, (bn, conv) in enumerate(zip(self.dec_bn, self.dec_conv)):
             y = _upsample_nearest_neighbour(y)
-            if print_sizes:
+            if debug:
                 print("up", y.shape)
 
-            y = gelu(self.decoders[d_idx](y))
-            if print_sizes:
+            #y = gelu(conv(bn(y, training)))
+            y = gelu(conv(y))
+            if debug:
                 print("d_%d" % d_idx, y.shape)
 
-            if d_idx < len(self.skip_decoders):
+            if d_idx < len(self.skip_dec_conv):
                 y = jnp.concatenate([y, encoded[3-d_idx]], axis=1)
-                if print_sizes:
+                if debug:
                     print("d+e_%d" % d_idx, y.shape)
-                y = gelu(self.skip_decoders[d_idx](y))
-                if print_sizes:
+                bn, conv = self.skip_dec_bn[d_idx], self.skip_dec_conv[d_idx]
+                #y = gelu(conv(bn(y, training)))
+                y = gelu(conv(y))
+                if debug:
                     print("d+e_%d conv" % d_idx, y.shape)
 
+        #logits = self.logits(self.logits_bn(y, training))
         logits = self.logits(y)
-        if print_sizes:
+        if debug:
             print("l", logits.shape)
+        #print("return", logits.transpose((0, 2, 3, 1)).shape)
         return logits.transpose((0, 2, 3, 1))
 
     def dithers_as_pil(self, imgs):
