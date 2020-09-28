@@ -10,120 +10,87 @@ import numpy as np
 import util as u
 
 
-def _conv_layer(stride, activation, kernel_size, inp, kernel, bias):
-    no_dilation = (1, 1)
-    some_height_width = 10  # values don't matter; just shape of input
-    input_shape = (1, some_height_width, some_height_width, 3)
-    kernel_shape = (kernel_size, kernel_size, 1, 1)
-    input_kernel_output = ('NHWC', 'HWIO', 'NHWC')
-    conv_dimension_numbers = jax.lax.conv_dimension_numbers(input_shape,
-                                                            kernel_shape,
-                                                            input_kernel_output)
-    block = jax.lax.conv_general_dilated(inp, kernel, (stride, stride),
-                                         'SAME', no_dilation, no_dilation,
-                                         conv_dimension_numbers)
-    if bias is not None:
-        block += bias
-    if activation:
-        block = activation(block)
-    return block
-
-
-def _upsample_nearest_neighbour(inputs):
-    input_channels = inputs.shape[-1]
-    inputs_nchw = jnp.transpose(inputs, (0, 3, 1, 2))
-    flat_inputs_shape = (-1, inputs.shape[1], inputs.shape[2], 1)
+def _upsample_nearest_neighbour(inputs_nchw):
+    # nearest neighbour upsampling on NCHW input
+    _n, input_c, h, w = inputs_nchw.shape
+    flat_inputs_shape = (-1, h, w, 1)
     flat_inputs = jnp.reshape(inputs_nchw, flat_inputs_shape)
-
     resize_kernel = jnp.ones((2, 2, 1, 1))
     strides = (2, 2)
     flat_outputs = jax.lax.conv_transpose(
         flat_inputs, resize_kernel, strides, padding="SAME")
-
-    outputs_nchw_shape = (-1, input_channels, 2 *
-                          inputs.shape[1], 2 * inputs.shape[2])
+    outputs_nchw_shape = (-1, input_c, 2 * h, 2 * w)
     outputs_nchw = jnp.reshape(flat_outputs, outputs_nchw_shape)
-    return jnp.transpose(outputs_nchw, (0, 2, 3, 1))
+    return outputs_nchw
 
 
 class Unet(objax.Module):
     def __init__(self):
 
-        key = objax.random.Generator(123)
-
-        self.enc_conv_kernels = objax.ModuleList()
-        self.enc_conv_biases = objax.ModuleList()
         num_channels = 3
-        # TODO: drop i here
-        for i, num_output_channels in enumerate([32, 64, 128, 256, 256]):
-            self.enc_conv_kernels.append(TrainVar(
-                he_normal()(key(), (3, 3, num_channels, num_output_channels))))
-            self.enc_conv_biases.append(
-                TrainVar(jnp.zeros((num_output_channels,))))
+
+        self.encoders = objax.ModuleList()
+        k = 7
+        for num_output_channels in [32, 64, 128, 256, 512]:
+            self.encoders.append(objax.nn.Conv2D(
+                num_channels, num_output_channels, strides=2, k=k))
+            k = 3
             num_channels = num_output_channels
 
-        self.dec_conv_kernels = objax.ModuleList()
-        self.dec_conv_biases = objax.ModuleList()
-        for i, num_output_channels in enumerate([256, 128, 64, 32, 16]):
-            self.dec_conv_kernels.append(TrainVar(
-                he_normal()(key(), (3, 3, num_channels, num_output_channels))))
-            self.dec_conv_biases.append(
-                TrainVar(jnp.zeros((num_output_channels,))))
+        self.decoders = objax.ModuleList()
+        for num_output_channels in [256, 128, 64, 32, 16]:
+            self.decoders.append(objax.nn.Conv2D(
+                num_channels, num_output_channels, strides=1, k=3))
             num_channels = num_output_channels
 
-        self.dec_skip_conv_kernels = objax.ModuleList()
-        self.dec_skip_conv_biases = objax.ModuleList()
+        self.skip_decoders = objax.ModuleList()
         for channels in [256, 128, 64, 32]:
-            self.dec_skip_conv_kernels.append(TrainVar(
-                he_normal()(key(), (3, 3, 2*channels, channels))))
-            self.dec_skip_conv_biases.append(
-                TrainVar(jnp.zeros((channels,))))
+            self.skip_decoders.append(objax.nn.Conv2D(
+                2*channels, channels, strides=1, k=1))
+            num_channels = num_output_channels
 
-        self.logits_conv_kernel = TrainVar(
-            glorot_normal()(key(), (1, 1, num_channels, 1)))
-        self.logits_conv_bias = TrainVar(jnp.zeros((1,)))
+        self.logits = objax.nn.Conv2D(num_channels, nout=1, strides=1, k=1)
 
-    def dither_logits(self, img):
-        y = img
-        # print("inp", y.shape)
+    def __call__(self, img, training):
+        y = img.transpose((0, 3, 1, 2))
+        print_sizes = False
+        if print_sizes:
+            print("img", y.shape)
 
         encoded = []
-        for e in range(5):
-            if e == 0:
-                kernel_size = 7
-            else:
-                kernel_size = 3
-            y = _conv_layer(2, gelu, kernel_size, y,
-                            self.enc_conv_kernels[e].value,
-                            self.enc_conv_biases[e].value)
+        for e_idx, encoder in enumerate(self.encoders):
+            y = gelu(encoder(y))
             encoded.append(y)
-            # print("e", e, y.shape)
+            if print_sizes:
+                print("e_%d" % e_idx, y.shape)
 
-        for d in range(5):
+        for d_idx in range(len(self.decoders)):
+            y = _upsample_nearest_neighbour(y)
+            if print_sizes:
+                print("up", y.shape)
 
-            upsampled = _upsample_nearest_neighbour(y)
+            y = gelu(self.decoders[d_idx](y))
+            if print_sizes:
+                print("d_%d" % d_idx, y.shape)
 
-            y = _conv_layer(1, gelu, 3, upsampled,
-                            self.dec_conv_kernels[d].value,
-                            self.dec_conv_biases[d].value)
+            if d_idx < len(self.skip_decoders):
+                y = jnp.concatenate([y, encoded[3-d_idx]], axis=1)
+                if print_sizes:
+                    print("d+e_%d" % d_idx, y.shape)
+                y = gelu(self.skip_decoders[d_idx](y))
+                if print_sizes:
+                    print("d+e_%d conv" % d_idx, y.shape)
 
-            if d < len(self.dec_conv_kernels)-1:
-                # print("d", d, y.shape)
-                y = jnp.concatenate([y, encoded[3-d]], axis=3)
-                # print("d+e", d, y.shape)
-                y = _conv_layer(1, gelu, 3, y,
-                                self.dec_skip_conv_kernels[d].value,
-                                self.dec_skip_conv_biases[d].value)
-            #     print("d+e_2", d, y.shape)
-            # else:
-            #     print("d", d, y.shape)
-
-        logits = _conv_layer(1, None, 1, y,
-                             self.logits_conv_kernel.value,
-                             self.logits_conv_bias.value)
-        # print(logits.shape)
-
-        return logits
+        logits = self.logits(y)
+        if print_sizes:
+            print("l", logits.shape)
+        return logits.transpose((0, 2, 3, 1))
 
     def dithers_as_pil(self, imgs):
-        return [u.dither_to_pil_image(d) for d in self.dither_logits(imgs)]
+        return [u.dither_to_pil_image(d) for d in self.__call__(imgs, training=False)]
+
+
+if __name__ == '__main__':
+    unet = Unet()
+    import numpy as np
+    print(unet(np.random(4, 128, 128, 3)).shape)

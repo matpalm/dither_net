@@ -26,14 +26,25 @@ wandb.init(project='dither_net', group='v1', name=RUN)
 unet = models.Unet()
 
 
-def cross_entropy(rgb_img, true_dither):
-    pred_dither_logits = unet.dither_logits(rgb_img)
+def cross_entropy(rgb_img, true_dither, training):
+    pred_dither_logits = unet(rgb_img, training)
     per_pixel_loss = sigmoid_cross_entropy_logits(pred_dither_logits,
                                                   true_dither)
     return jnp.mean(per_pixel_loss)
 
 
-gradient_loss = objax.GradValues(cross_entropy, unet.vars())
+def cross_entropy_non_training(rgb_img, true_dither):
+    return cross_entropy(rgb_img, true_dither, training=False)
+
+
+cross_entropy_non_training = objax.Jit(cross_entropy_non_training, unet.vars())
+
+
+def cross_entropy_training(rgb_img, true_dither):
+    return cross_entropy(rgb_img, true_dither, training=True)
+
+
+gradient_loss = objax.GradValues(cross_entropy_training, unet.vars())
 
 optimiser = objax.optimizer.Adam(unet.vars())
 # optimiser = objax.optimizer.Momentum(unet.vars(), momentum=0.1, nesterov=True)
@@ -107,8 +118,10 @@ for epoch in range(10000):
     ckpt.save(unet.vars(), idx=epoch)
 
     # check loss against last batch as well as sample batch
-    last_loss = float(cross_entropy(rgb_imgs, true_dithers))
-    sample_loss = float(cross_entropy(sample_rgb_imgs, sample_true_dithers))
+    # TODO: jit these?
+    last_loss = float(cross_entropy_non_training(rgb_imgs, true_dithers))
+    sample_loss = float(cross_entropy_non_training(
+        sample_rgb_imgs, sample_true_dithers))
 
     # save dithers to disk
     sample_dithered_img = unet.dithers_as_pil(sample_rgb_imgs)
