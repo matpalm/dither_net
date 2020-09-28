@@ -5,3 +5,7 @@ __pycache__/
 wandb/
 frames/frames
 test/
+ckpts/
+manifests/
+frames
+frames

@@ -25,9 +25,10 @@ def parse(fname):
 def dataset(manifest_file, batch_size):
     def fnames():
         fnames = list(map(str.strip, open(manifest_file).readlines()))
-        random.shuffle(fnames)
-        for fname in fnames:
-            yield parse(fname)
+        while True:
+            random.shuffle(fnames)
+            for fname in fnames:
+                yield parse(fname)
 
     return (tf.data.Dataset.from_generator(fnames,
                                            output_types=(tf.float32, tf.float32))

@@ -15,6 +15,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--manifest-file', type=str)
 parser.add_argument('--batch-size', type=int)
 parser.add_argument('--gradient-clip', type=float, default=1.0)
+parser.add_argument('--steps-per-epoch', type=int)
 opts = parser.parse_args()
 print(opts)
 
@@ -70,46 +71,61 @@ learning_rate = 1e-3
 # for debug images
 u.ensure_dir_exists("test/%s" % RUN)
 
-sample_batch_rgb = None
+sample_rgb_imgs = None
+sample_true_dithers = None
 
-for i in range(10000):
+dataset = data.dataset(manifest_file=opts.manifest_file,
+                       batch_size=opts.batch_size)
+
+ckpt = objax.io.Checkpoint(logdir=f"ckpts/{RUN}/", keep_ckpts=20)
+
+for epoch in range(10000):
 
     g_min_max = None
-    for _ in range(10):
-        dataset = data.dataset(manifest_file=opts.manifest_file,
-                               batch_size=opts.batch_size)
-        for rgb_imgs, true_dithers in dataset:
-            rgb_imgs = rgb_imgs.numpy()
-            true_dithers = true_dithers.numpy()
-            # grab first batch as a sample batch for use over entire training
-            if sample_batch_rgb is None:
-                sample_batch_rgb = rgb_imgs
-                #u.collage(sample_batch_rgb).save("test/%s/rgb.png" % RUN)
-            # collect grad norms for first step, once per epoch
-            if g_min_max is None:
-                grad_norms = train_step_with_grad_norms(
-                    learning_rate, rgb_imgs, true_dithers)
-                g_min_max = (float(jnp.min(grad_norms)),
-                             float(jnp.max(grad_norms)))
-            else:
-                train_step(learning_rate, rgb_imgs, true_dithers)
 
-    # check loss against last batch
-    loss = float(cross_entropy(rgb_imgs, true_dithers))
+    for rgb_imgs, true_dithers in dataset.take(opts.steps_per_epoch):
+        rgb_imgs = rgb_imgs.numpy()
+        true_dithers = true_dithers.numpy()
+
+        # grab first batch as a sample batch for use over entire training
+        if sample_rgb_imgs is None:
+            sample_rgb_imgs = rgb_imgs
+            sample_true_dithers = true_dithers
+            collage = u.collage(u.rgb_imgs_to_pil_images(sample_rgb_imgs))
+            collage.save("test/%s/rgb.png" % RUN)
+
+        # collect grad norms once per epoch
+        if g_min_max is None:
+            grad_norms = train_step_with_grad_norms(
+                learning_rate, rgb_imgs, true_dithers)
+            g_min_max = (float(jnp.min(grad_norms)),
+                         float(jnp.max(grad_norms)))
+        else:
+            train_step(learning_rate, rgb_imgs, true_dithers)
+
+    # ckpt
+    ckpt.save(unet.vars(), idx=epoch)
+
+    # check loss against last batch as well as sample batch
+    last_loss = float(cross_entropy(rgb_imgs, true_dithers))
+    sample_loss = float(cross_entropy(sample_rgb_imgs, sample_true_dithers))
 
     # save dithers to disk
-    sample_dithered_img = unet.dithers_as_pil(sample_batch_rgb)
-    u.collage(sample_dithered_img).save("test/%s/%05d.png" % (RUN, i))
+    sample_dithered_img = unet.dithers_as_pil(sample_rgb_imgs)
+    u.collage(sample_dithered_img).save("test/%s/%05d.png" % (RUN, epoch))
 
     # and prep images for wandb logging
     # wand_imgs = []
     # for d, f in zip(sample_dithered_img, FRAMES):
     #     wand_imgs.append(wandb.Image(d, caption="f_%05d" % f))
-    wandb.log({'loss': loss, 'g_min': g_min_max[0], 'g_max': g_min_max[1],
-               'learning_rate': learning_rate}, step=i)
+    wandb.log({'loss': last_loss, 'g_min': g_min_max[0], 'g_max': g_min_max[1],
+               'sample_loss': sample_loss, 'learning_rate': learning_rate},
+              step=epoch)
 
     # if not improvement_tracking.improved(loss):
     #     learning_rate /= 2
     #     improvement_tracking.reset()
 
-    print("i", i, "lr", learning_rate, "g_min max", g_min_max, "loss", loss)
+    print("epoch", epoch, "lr", learning_rate,
+          "g_min max", g_min_max, "last_loss", last_loss,
+          "sample_loss", sample_loss)

@@ -21,6 +21,14 @@ def dither_to_pil_image(dither):
     return Image.fromarray(np.array(lit_pixels), 'L')
 
 
+def rgb_imgs_to_pil_images(rgb_imgs):
+    pil_imgs = []
+    for rgb_img in rgb_imgs:
+        rgb_img = np.array(rgb_img * 255, dtype=np.uint8)
+        pil_imgs.append(Image.fromarray(rgb_img))
+    return pil_imgs
+
+
 def collage(pil_imgs):
     # assume all imgs same (w, h)
     w, h = pil_imgs[0].size
