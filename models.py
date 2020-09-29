@@ -25,78 +25,136 @@ def _upsample_nearest_neighbour(inputs_nchw):
     return outputs_nchw
 
 
+DEBUG = False
+
+
+class EncoderBlock(objax.Module):
+
+    def __init__(self, nin, nout, k):
+        self.shortcut = Conv2D(nin, nout, strides=2, k=1)
+        self.conv1 = Conv2D(nin, nout, strides=1, k=k)
+        self.conv2 = Conv2D(nout, nout, strides=2, k=3)
+
+    def __call__(self, x, training):
+        if DEBUG:
+            print(">x", x.shape)
+
+        shortcut = self.shortcut(x)
+        if DEBUG:
+            print("shortcut", shortcut.shape)
+
+        y = gelu(self.conv1(x))
+        if DEBUG:
+            print("c1", y.shape)
+        y = gelu(self.conv2(y))
+        if DEBUG:
+            print("c2", y.shape)
+
+        y += shortcut
+        if DEBUG:
+            print("y_shortcut", y.shape)
+
+        if DEBUG:
+            print("<y", y.shape)
+        return y
+
+
+class DecoderBlock(objax.Module):
+
+    def __init__(self, nin, nout):
+        self.shortcut = Conv2D(nin, nout, strides=1, k=1)
+        self.conv1 = Conv2D(nin, nout, strides=1, k=3)
+        self.conv2 = Conv2D(nout, nout, strides=1, k=3)
+        self.skip_conv = Conv2D(2*nout, nout, strides=1, k=1)
+
+    def __call__(self, x, encoded, training):
+        if DEBUG:
+            print(">x", x.shape)
+
+        y = _upsample_nearest_neighbour(x)
+        if DEBUG:
+            print("up", y.shape)
+
+        shortcut = self.shortcut(y)
+        if DEBUG:
+            print("shortcut", shortcut.shape)
+
+        y = gelu(self.conv1(y))
+        if DEBUG:
+            print("c1", y.shape)
+
+        y = gelu(self.conv2(y))
+        if DEBUG:
+            print("c2", y.shape)
+
+        if encoded is not None:
+            y = jnp.concatenate([y, encoded], axis=1)
+            if DEBUG:
+                print("skip_concat", y.shape)
+            y = self.skip_conv(y)
+            if DEBUG:
+                print("skip_conv", y.shape)
+
+        y += shortcut
+        if DEBUG:
+            print("y_shortcut", y.shape)
+
+        if DEBUG:
+            print("<y", y.shape)
+        return y
+
+
 class Unet(objax.Module):
     def __init__(self):
 
         num_channels = 3
 
-        self.enc_bn = objax.ModuleList()
-        self.enc_conv = objax.ModuleList()
+        self.encoders = objax.ModuleList()
         k = 7
-        for num_output_channels in [32, 64, 128, 256, 256]:
-            self.enc_bn.append(BatchNorm2D(num_channels))
-            self.enc_conv.append(Conv2D(num_channels, num_output_channels,
-                                        strides=2, k=k))
+        for num_output_channels in [32, 64, 128, 128, 128]:
+            self.encoders.append(EncoderBlock(
+                num_channels, num_output_channels, k))
             k = 3
             num_channels = num_output_channels
 
-        self.dec_bn = objax.ModuleList()
-        self.dec_conv = objax.ModuleList()
-        for num_output_channels in [256, 128, 64, 32, 16]:
-            self.dec_bn.append(BatchNorm2D(num_channels))
-            self.dec_conv.append(Conv2D(num_channels, num_output_channels,
-                                        strides=1, k=3))
+        self.decoders = objax.ModuleList()
+        for num_output_channels in [128, 128, 64, 32, 16]:
+            self.decoders.append(DecoderBlock(
+                num_channels, num_output_channels))
             num_channels = num_output_channels
 
-        self.skip_dec_bn = objax.ModuleList()
-        self.skip_dec_conv = objax.ModuleList()
-        for channels in [256, 128, 64, 32]:
-            self.skip_dec_bn.append(BatchNorm2D(2*channels))
-            self.skip_dec_conv.append(Conv2D(2*channels, channels,
-                                             strides=1, k=1))
-            num_channels = num_output_channels
-
-        self.logits_bn = BatchNorm2D(num_channels)
-        self.logits = Conv2D(num_channels, nout=1, strides=1, k=1,
-                             w_init=xavier_normal)
+        #self.logits_bn = BatchNorm2D(num_channels)
+        self.logits = Conv2D(num_channels, nout=1,
+                             strides=1, k=1, w_init=xavier_normal)
 
     def __call__(self, img, training):
-        debug = False
-
         y = img.transpose((0, 3, 1, 2))
-
-        if debug:
+        if DEBUG:
             print("img", y.shape)
 
         encoded = []
-        for e_idx, (bn, conv) in enumerate(zip(self.enc_bn, self.enc_conv)):
-            y = gelu(conv(bn(y, training)))
+        for e_idx, encoder in enumerate(self.encoders):
+            if DEBUG:
+                print(">e_%d" % e_idx)
+            y = encoder(y, training)
             encoded.append(y)
-            if debug:
-                print("e_%d" % e_idx, y.shape)
+            if DEBUG:
+                print("<e_%d" % e_idx)
 
-        for d_idx, (bn, conv) in enumerate(zip(self.dec_bn, self.dec_conv)):
-            y = _upsample_nearest_neighbour(y)
-            if debug:
-                print("up", y.shape)
+        for d_idx, decoder in enumerate(self.decoders):
+            if DEBUG:
+                print(">d_%d" % d_idx)
+            enc = None
+            if d_idx < len(self.decoders)-1:
+                enc = encoded[3-d_idx]
+            y = decoder(y, enc, training)
+            if DEBUG:
+                print("<d_%d" % d_idx)
 
-            y = gelu(conv(bn(y, training)))
-            if debug:
-                print("d_%d" % d_idx, y.shape)
-
-            if d_idx < len(self.skip_dec_conv):
-                y = jnp.concatenate([y, encoded[3-d_idx]], axis=1)
-                if debug:
-                    print("d+e_%d" % d_idx, y.shape)
-                bn, conv = self.skip_dec_bn[d_idx], self.skip_dec_conv[d_idx]
-                y = gelu(conv(bn(y, training)))
-                if debug:
-                    print("d+e_%d conv" % d_idx, y.shape)
-
-        logits = self.logits(self.logits_bn(y, training))
-        if debug:
+        #logits = self.logits(self.logits_bn(y, training))
+        logits = self.logits(y)
+        if DEBUG:
             print("l", logits.shape)
-        #print("return", logits.transpose((0, 2, 3, 1)).shape)
         return logits.transpose((0, 2, 3, 1))
 
     def dithers_as_pil(self, imgs):

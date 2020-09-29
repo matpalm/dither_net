@@ -125,8 +125,9 @@ for epoch in range(10000):
         sample_rgb_imgs, sample_true_dithers))
 
     # save dithers to disk
-    sample_dithered_img = unet.dithers_as_pil(sample_rgb_imgs)
-    u.collage(sample_dithered_img).save("test/%s/%05d.png" % (RUN, epoch))
+    if epoch % 10 == 0:
+        sample_dithered_img = unet.dithers_as_pil(sample_rgb_imgs)
+        u.collage(sample_dithered_img).save("test/%s/%05d.png" % (RUN, epoch))
 
     # and prep images for wandb logging
     # wand_imgs = []
