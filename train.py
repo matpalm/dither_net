@@ -77,7 +77,7 @@ train_step = objax.Jit(train_step,
 train_step_with_grad_norms = objax.Jit(train_step_with_grad_norms,
                                        gradient_loss.vars() + optimiser.vars())
 
-learning_rate = 1e-3
+learning_rate = u.ValueFromFile("learning_rate.txt", 1e-3)
 # improvement_tracking = u.ImprovementTracking(patience=10, smoothing=0.5)
 
 # for debug images
@@ -109,11 +109,11 @@ for epoch in range(10000):
         # collect grad norms once per epoch
         if g_min_max is None:
             grad_norms = train_step_with_grad_norms(
-                learning_rate, rgb_imgs, true_dithers)
+                learning_rate.value(), rgb_imgs, true_dithers)
             g_min_max = (float(jnp.min(grad_norms)),
                          float(jnp.max(grad_norms)))
         else:
-            train_step(learning_rate, rgb_imgs, true_dithers)
+            train_step(learning_rate.value(), rgb_imgs, true_dithers)
 
     # ckpt
     ckpt.save(unet.vars(), idx=epoch)
@@ -125,22 +125,21 @@ for epoch in range(10000):
         sample_rgb_imgs, sample_true_dithers))
 
     # save dithers to disk
-    if epoch % 10 == 0:
-        sample_dithered_img = unet.dithers_as_pil(sample_rgb_imgs)
-        u.collage(sample_dithered_img).save("test/%s/%05d.png" % (RUN, epoch))
+    sample_dithered_img = unet.dithers_as_pil(sample_rgb_imgs)
+    u.collage(sample_dithered_img).save("test/%s/%05d.png" % (RUN, epoch))
 
     # and prep images for wandb logging
     # wand_imgs = []
     # for d, f in zip(sample_dithered_img, FRAMES):
     #     wand_imgs.append(wandb.Image(d, caption="f_%05d" % f))
     wandb.log({'loss': last_loss, 'g_min': g_min_max[0], 'g_max': g_min_max[1],
-               'sample_loss': sample_loss, 'learning_rate': learning_rate},
-              step=epoch)
+               'sample_loss': sample_loss,
+               'learning_rate': learning_rate.value()}, step=epoch)
 
     # if not improvement_tracking.improved(loss):
     #     learning_rate /= 2
     #     improvement_tracking.reset()
 
-    print("epoch", epoch, "lr", learning_rate,
+    print("epoch", epoch, "lr", learning_rate.value(),
           "g_min max", g_min_max, "last_loss", last_loss,
           "sample_loss", sample_loss)

@@ -108,3 +108,16 @@ class ImprovementTracking(object):
         self.patience -= 1
         print("IT didn't make improvement, patience now", self.patience)
         return self.patience != 0
+
+
+class ValueFromFile(object):
+    def __init__(self, fname, init_value):
+        self.current_value = init_value
+        self.fname = fname
+
+    def value(self):
+        try:
+            self.current_value = float(open(self.fname).read())
+        except Exception as e:
+            print("couldn't reload value " + str(e))
+        return self.current_value
