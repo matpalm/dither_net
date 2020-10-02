@@ -8,7 +8,7 @@ import util as u
 import wandb
 import data
 import argparse
-
+import os
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -16,6 +16,7 @@ parser.add_argument('--manifest-file', type=str)
 parser.add_argument('--batch-size', type=int)
 parser.add_argument('--gradient-clip', type=float, default=1.0)
 parser.add_argument('--steps-per-epoch', type=int)
+parser.add_argument('--positive-weight', type=float, default=1.0)
 opts = parser.parse_args()
 print(opts)
 
@@ -27,28 +28,31 @@ unet = models.Unet()
 print(unet.vars())
 
 
-def _cross_entropy(rgb_img, true_dither, training):
+def _cross_entropy(rgb_img, true_dither, positive_weight, training):
     pred_dither_logits = unet(rgb_img, training)
     per_pixel_loss = sigmoid_cross_entropy_logits(pred_dither_logits,
                                                   true_dither)
-    return jnp.mean(per_pixel_loss)
+    loss_weight = jnp.where(true_dither == 1, positive_weight, 1.0)
+    return jnp.mean(loss_weight * per_pixel_loss)
 
 
 def cross_entropy_non_training(rgb_img, true_dither):
-    return _cross_entropy(rgb_img, true_dither, training=False)
+    return _cross_entropy(rgb_img, true_dither,
+                          positive_weight=opts.positive_weight, training=False)
 
 
 cross_entropy_non_training = objax.Jit(cross_entropy_non_training, unet.vars())
 
 
 def cross_entropy_training(rgb_img, true_dither):
-    return _cross_entropy(rgb_img, true_dither, training=True)
+    return _cross_entropy(rgb_img, true_dither,
+                          positive_weight=opts.positive_weight, training=True)
 
 
 gradient_loss = objax.GradValues(cross_entropy_training, unet.vars())
 
 optimiser = objax.optimizer.Adam(unet.vars())
-# optimiser = objax.optimizer.Momentum(unet.vars(), momentum=0.1, nesterov=True)
+#optimiser = objax.optimizer.Momentum(unet.vars(), momentum=0.9, nesterov=True)
 
 
 def train_step(learning_rate, rgb_img, true_dither):
@@ -77,14 +81,33 @@ train_step = objax.Jit(train_step,
 train_step_with_grad_norms = objax.Jit(train_step_with_grad_norms,
                                        gradient_loss.vars() + optimiser.vars())
 
+
+def predict(rgb_imgs):
+    return unet(rgb_imgs, training=False)
+
+
+predict = objax.Jit(predict, unet.vars())
+
+
 learning_rate = u.ValueFromFile("learning_rate.txt", 1e-3)
 # improvement_tracking = u.ImprovementTracking(patience=10, smoothing=0.5)
 
 # for debug images
 u.ensure_dir_exists("test/%s" % RUN)
+if os.path.exists("test/latest"):
+    os.remove("test/latest")
+os.symlink(RUN, "test/latest")
 
-sample_rgb_imgs = None
-sample_true_dithers = None
+# load some full res images
+full_rgbs = []
+full_true_dithers = []
+for frame in [5000, 43000, 67000, 77000]:
+    full_rgb, full_true_dither = data.parse_full_size(
+        "frames/full_res/f_%08d.jpg" % frame)
+    full_rgbs.append(full_rgb)
+    full_true_dithers.append(full_true_dither)
+full_rgbs = np.stack(full_rgbs)
+full_true_dithers = np.stack(full_true_dithers)
 
 dataset = data.dataset(manifest_file=opts.manifest_file,
                        batch_size=opts.batch_size)
@@ -98,13 +121,6 @@ for epoch in range(10000):
     for rgb_imgs, true_dithers in dataset.take(opts.steps_per_epoch):
         rgb_imgs = rgb_imgs.numpy()
         true_dithers = true_dithers.numpy()
-
-        # grab first batch as a sample batch for use over entire training
-        if sample_rgb_imgs is None:
-            sample_rgb_imgs = rgb_imgs
-            sample_true_dithers = true_dithers
-            collage = u.collage(u.rgb_imgs_to_pil_images(sample_rgb_imgs))
-            collage.save("test/%s/rgb.png" % RUN)
 
         # collect grad norms once per epoch
         if g_min_max is None:
@@ -121,19 +137,20 @@ for epoch in range(10000):
     # check loss against last batch as well as sample batch
     # TODO: jit these?
     last_loss = float(cross_entropy_non_training(rgb_imgs, true_dithers))
-    sample_loss = float(cross_entropy_non_training(
-        sample_rgb_imgs, sample_true_dithers))
 
-    # save dithers to disk
-    sample_dithered_img = unet.dithers_as_pil(sample_rgb_imgs)
-    u.collage(sample_dithered_img).save("test/%s/%05d.png" % (RUN, epoch))
+    # save sample rgb, true dith and pred dither in collage.
+    full_pred_dithers = predict(full_rgbs)
+    samples = []
+    for r, t, p in zip(full_rgbs, full_true_dithers, full_pred_dithers):
+        triplet = [u.rgb_img_to_pil(r), u.dither_to_pil(t), u.dither_to_pil(p)]
+        samples.append(u.collage(triplet, side_by_side=True))
+    u.collage(samples).save("test/%s/%05d.png" % (RUN, epoch))
 
     # and prep images for wandb logging
     # wand_imgs = []
     # for d, f in zip(sample_dithered_img, FRAMES):
     #     wand_imgs.append(wandb.Image(d, caption="f_%05d" % f))
     wandb.log({'loss': last_loss, 'g_min': g_min_max[0], 'g_max': g_min_max[1],
-               'sample_loss': sample_loss,
                'learning_rate': learning_rate.value()}, step=epoch)
 
     # if not improvement_tracking.improved(loss):
@@ -141,5 +158,4 @@ for epoch in range(10000):
     #     improvement_tracking.reset()
 
     print("epoch", epoch, "lr", learning_rate.value(),
-          "g_min max", g_min_max, "last_loss", last_loss,
-          "sample_loss", sample_loss)
+          "g_min max", g_min_max, "last_loss", last_loss)

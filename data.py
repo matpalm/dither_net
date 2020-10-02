@@ -10,9 +10,12 @@ from functools import lru_cache
 
 # TODO: pack to TFRECORD eventually...
 
+PATCH_SIZE = 64
 
 # @lru_cache(None)
-def parse(fname):
+
+
+def parse_full_size(fname):
     rgb_img = Image.open(fname)
     true_dither = rgb_img.convert(mode='1', dither=Image.FLOYDSTEINBERG)
     rgb_img = np.array(rgb_img, dtype=np.float32)
@@ -22,15 +25,46 @@ def parse(fname):
     return rgb_img, true_dither
 
 
+def parse(fname, crops_per_img=64):
+    rgb_img, true_dither = parse_full_size(fname)
+    w, h = rgb_img.shape[1], rgb_img.shape[0]
+    for _ in range(crops_per_img):
+        left = random.randint(0, h-PATCH_SIZE)
+        top = random.randint(0, w-PATCH_SIZE)
+        rgb_crop = rgb_img[left:left+PATCH_SIZE, top:top+PATCH_SIZE, :]
+        dither_crop = true_dither[left:left +
+                                  PATCH_SIZE, top: top+PATCH_SIZE, :]
+        yield rgb_crop, dither_crop
+
+
 def dataset(manifest_file, batch_size):
     def fnames():
         fnames = list(map(str.strip, open(manifest_file).readlines()))
         while True:
             random.shuffle(fnames)
             for fname in fnames:
-                yield parse(fname)
+                for crops in parse(fname):
+                    yield crops
 
     return (tf.data.Dataset.from_generator(fnames,
                                            output_types=(tf.float32, tf.float32))
+            .shuffle(4096)
             .batch(batch_size)
             .prefetch(AUTOTUNE))
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--fname', type=str)
+    opts = parser.parse_args()
+    rgb, dither = parse(opts.fname)
+    rgb = u.rgb_img_to_pil(rgb)
+    dither = u.dither_to_pil(dither)
+    assert rgb.size == dither.size
+    w, h = rgb.size
+    collage = Image.new('RGB', (w*2, h))
+    collage.paste(rgb, (0, 0))
+    collage.paste(dither, (w, 0))
+    collage.show()

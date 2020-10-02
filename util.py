@@ -15,28 +15,30 @@ def ensure_dir_exists(directory):
         os.makedirs(directory)
 
 
-def dither_to_pil_image(dither):
+def rgb_img_to_pil(rgb_img):
+    rgb_img = np.array(rgb_img * 255, dtype=np.uint8)
+    return Image.fromarray(rgb_img)
+
+
+def dither_to_pil(dither):
     lit_pixels = dither[:, :, 0] > 0
     lit_pixels = np.where(lit_pixels, 255, 0).astype(np.uint8)
     return Image.fromarray(np.array(lit_pixels), 'L')
 
 
-def rgb_imgs_to_pil_images(rgb_imgs):
-    pil_imgs = []
-    for rgb_img in rgb_imgs:
-        rgb_img = np.array(rgb_img * 255, dtype=np.uint8)
-        pil_imgs.append(Image.fromarray(rgb_img))
-    return pil_imgs
-
-
-def collage(pil_imgs):
+def collage(pil_imgs, side_by_side=False):
     # assume all imgs same (w, h)
     w, h = pil_imgs[0].size
-    n = math.ceil(math.sqrt(len(pil_imgs)))
-    collage = Image.new('RGB', (n*w, n*h))
-    for idx, img in enumerate(pil_imgs):
-        r, c = idx % n, idx // n
-        collage.paste(img, (r*w, c*h))
+    if side_by_side:
+        collage = Image.new('RGB', (len(pil_imgs)*w, h))
+        for idx, img in enumerate(pil_imgs):
+            collage.paste(img, (idx*w, 0))
+    else:
+        n = math.ceil(math.sqrt(len(pil_imgs)))
+        collage = Image.new('RGB', (n*w, n*h))
+        for idx, img in enumerate(pil_imgs):
+            r, c = idx % n, idx // n
+            collage.paste(img, (r*w, c*h))
     return collage
 
 
