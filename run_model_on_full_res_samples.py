@@ -26,9 +26,21 @@ def predict(rgb_imgs):
 
 predict = objax.Jit(predict, unet.vars())
 
-frame = 3000
-while frame <= 162999:
-    fname = "frames/full_res/f_%08d.jpg" % frame
+
+def parse(fname):
+
+
+def fnames():
+    frame = 3000
+    while frame <= 162999:
+        yield "frames/full_res/f_%08d.jpg" % frame
+        frame += 1000
+
+
+dataset = (tf.data.Dataset.from_generator(fnames, output_types=(tf.string))
+           .map(parse, AUTOTUNE)
+           .batch(16))
+for fname in fnames():
     print(fname)
 
     # parse RGB and true dither
@@ -44,6 +56,3 @@ while frame <= 162999:
     collage.paste(u.dither_to_pil(true_dither), (w, 0))
     collage.paste(u.dither_to_pil(pred_dither), (w*2, 0))
     collage.save("collages/%08d.png" % frame)
-
-    # step to next frame
-    frame += 1000
