@@ -37,8 +37,8 @@ def parse(fname, crops_per_img=64):
         yield rgb_crop, dither_crop
 
 
-def dataset(manifest_file, batch_size):
-    def fnames():
+def dataset(manifest_file, batch_size, shuffle_buffer_size=4096):
+    def crops():
         fnames = list(map(str.strip, open(manifest_file).readlines()))
         while True:
             random.shuffle(fnames)
@@ -46,9 +46,9 @@ def dataset(manifest_file, batch_size):
                 for crops in parse(fname):
                     yield crops
 
-    return (tf.data.Dataset.from_generator(fnames,
+    return (tf.data.Dataset.from_generator(crops,
                                            output_types=(tf.float32, tf.float32))
-            .shuffle(4096)
+            .shuffle(shuffle_buffer_size)
             .batch(batch_size)
             .prefetch(AUTOTUNE))
 
