@@ -67,12 +67,6 @@ def generator_loss(rgb_img, true_dither):
              'overall_patch_loss': overall_patch_loss})
 
 
-def clip_gradients(grads, theta):
-    total_grad_norm = jnp.linalg.norm([jnp.linalg.norm(g) for g in grads])
-    scale_factor = jnp.minimum(theta / total_grad_norm, 1.)
-    return [g * scale_factor for g in grads]
-
-
 generator_gradient_loss = objax.GradValues(generator_loss, generator.vars())
 
 generator_optimiser = objax.optimizer.Adam(generator.vars())
@@ -93,7 +87,7 @@ generator_optimiser = objax.optimizer.Adam(generator.vars())
 
 def generator_train_step(learning_rate, rgb_img, true_dither):
     grads, _loss = generator_gradient_loss(rgb_img, true_dither)
-    grads = clip_gradients(grads, theta=opts.gradient_clip)
+    grads = u.clip_gradients(grads, theta=opts.gradient_clip)
     generator_optimiser(learning_rate, grads)
 
 
@@ -140,7 +134,7 @@ discriminator_optimiser = objax.optimizer.Adam(discriminator.vars())
 
 def discriminator_train_step(learning_rate, rgb_img, true_dither):
     grads, _loss = discriminator_gradient_loss(rgb_img, true_dither)
-    grads = clip_gradients(grads, theta=opts.gradient_clip)
+    grads = u.clip_gradients(grads, theta=opts.gradient_clip)
     discriminator_optimiser(learning_rate, grads)
 
 

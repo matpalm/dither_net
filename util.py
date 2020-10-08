@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 import os
 import math
+import jax.numpy as jnp
 
 
 def DTS():
@@ -123,3 +124,9 @@ class ValueFromFile(object):
         except Exception as e:
             print("couldn't reload value " + str(e))
         return self.current_value
+
+
+def clip_gradients(grads, theta):
+    total_grad_norm = jnp.linalg.norm([jnp.linalg.norm(g) for g in grads])
+    scale_factor = jnp.minimum(theta / total_grad_norm, 1.)
+    return [g * scale_factor for g in grads]
