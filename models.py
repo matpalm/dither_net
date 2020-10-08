@@ -10,20 +10,6 @@ import util as u
 from objax.nn import Conv2D, ConvTranspose2D, Sequential, BatchNorm2D
 
 
-def _upsample_nearest_neighbour(inputs_nchw):
-    # nearest neighbour upsampling on NCHW input
-    _n, input_c, h, w = inputs_nchw.shape
-    flat_inputs_shape = (-1, h, w, 1)
-    flat_inputs = jnp.reshape(inputs_nchw, flat_inputs_shape)
-    resize_kernel = jnp.ones((2, 2, 1, 1))
-    strides = (2, 2)
-    flat_outputs = jax.lax.conv_transpose(
-        flat_inputs, resize_kernel, strides, padding="SAME")
-    outputs_nchw_shape = (-1, input_c, 2 * h, 2 * w)
-    outputs_nchw = jnp.reshape(flat_outputs, outputs_nchw_shape)
-    return outputs_nchw
-
-
 DEBUG = False
 
 
@@ -178,11 +164,9 @@ class Discriminator(objax.Module):
              BatchNorm2D(8), gelu,
              Conv2D(8, 16, strides=2, k=3, use_bias=False),
              BatchNorm2D(16), gelu,
-             Conv2D(16, 32, strides=2, k=3, use_bias=False),
-             BatchNorm2D(32), gelu,
-             Conv2D(32, 64, strides=2, k=3, use_bias=False),
-             BatchNorm2D(64), gelu,
-             Conv2D(64, 1, strides=1, k=1)])  # logits
+             Conv2D(16, 16, strides=2, k=3, use_bias=False),
+             BatchNorm2D(16), gelu,
+             Conv2D(16, 1, strides=1, k=1)])  # logits
 
     def __call__(self, x, training):
         x = x.transpose((0, 3, 1, 2))
