@@ -29,7 +29,7 @@ class EncoderBlock(objax.Module):
         self.conv1 = Conv2D(nin, nout, strides=1, k=k)
         self.conv2 = Conv2D(nout, nout, strides=2, k=3)
 
-    def __call__(self, x, training):
+    def __call__(self, x):
         if DEBUG:
             print(">x", x.shape)
 
@@ -61,7 +61,7 @@ class DecoderBlock(objax.Module):
         self.conv2 = Conv2D(nout, nout, strides=1, k=3)
         self.skip_conv = Conv2D(2*nout, nout, strides=1, k=1)
 
-    def __call__(self, x, encoded, training):
+    def __call__(self, x, encoded):
         if DEBUG:
             print(">x", x.shape)
 
@@ -121,7 +121,7 @@ class Generator(objax.Module):
         self.logits = Conv2D(num_channels, nout=1,
                              strides=1, k=1, w_init=xavier_normal)
 
-    def __call__(self, img, training=True):
+    def __call__(self, img):
         y = img.transpose((0, 3, 1, 2))
         if DEBUG:
             print("img", y.shape)
@@ -130,7 +130,7 @@ class Generator(objax.Module):
         for e_idx, encoder in enumerate(self.encoders):
             if DEBUG:
                 print(">e_%d" % e_idx)
-            y = encoder(y, training)
+            y = encoder(y)
             encoded.append(y)
             if DEBUG:
                 print("<e_%d" % e_idx)
@@ -141,11 +141,10 @@ class Generator(objax.Module):
             enc = None
             if d_idx < len(self.decoders)-1:
                 enc = encoded[-d_idx-2]
-            y = decoder(y, enc, training)
+            y = decoder(y, enc)
             if DEBUG:
                 print("<d_%d" % d_idx)
 
-        #logits = self.logits(self.logits_bn(y, training))
         logits = self.logits(y)
         if DEBUG:
             print("l", logits.shape)

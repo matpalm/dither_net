@@ -4,7 +4,7 @@ __pycache__/
 .ipynb_checkpoints/
 wandb/
 frames/frames
-test/
+full_res_samples/
 ckpts/
 manifests/
 frames

@@ -40,23 +40,19 @@ def generator_loss(rgb_img, true_dither):
     # generator loss is based on the generated images from the RGB and is
     # composed of two components...
     pred_dither_logits = generator(rgb_img)
-#     print("pred_dither_logits", pred_dither_logits.shape)
 
     # 1) a comparison to the true_dither to see how well it reconstructs it
     per_pixel_reconstruction_loss = sigmoid_cross_entropy_logits(
         pred_dither_logits, true_dither)
-#     print("per_pixel_reconstruction_loss.shape", per_pixel_reconstruction_loss.shape)
     loss_weight = jnp.where(true_dither == 1, opts.positive_weight, 1.0)
     reconstruction_loss = jnp.mean(loss_weight * per_pixel_reconstruction_loss)
 
     # 2) how well it fools the discriminator
     discriminator_logits = discriminator(sigmoid(pred_dither_logits),
                                          training=False)
-#     print("discriminator_result.shape", discriminator_result.shape)
     per_patch_loss = sigmoid_cross_entropy_logits(
         logits=discriminator_logits,
         labels=jnp.ones_like(discriminator_logits))
-#     print("per_patch_loss.shape", per_patch_loss.shape)
     overall_patch_loss = jnp.mean(per_patch_loss)
 
     # overall loss is weighted combination of the two
@@ -66,34 +62,6 @@ def generator_loss(rgb_img, true_dither):
     return (overall_loss,
             {'reconstruction_loss': reconstruction_loss,
              'overall_patch_loss': overall_patch_loss})
-
-
-generator_gradient_loss = objax.GradValues(generator_loss, generator.vars())
-
-generator_optimiser = objax.optimizer.Adam(generator.vars())
-
-
-# def train_generator_step(learning_rate, rgb_img, true_dither):
-#     grads, _loss = gradient_loss(rgb_img, true_dither)
-#     grads = clip_gradients(grads, theta=opts.gradient_clip)
-#     optimiser(learning_rate, grads)
-
-
-# def generator_train_step_with_grad_norms(learning_rate, rgb_img, true_dither):
-#     grads, _loss = generator_gradient_loss(rgb_img, true_dither)
-#     grads = clip_gradients(grads, theta=opts.gradient_clip)
-#     generator_optimiser(learning_rate, grads)
-#     grad_norms = [jnp.linalg.norm(g) for g in grads]
-#     return grad_norms
-
-def generator_train_step(learning_rate, rgb_img, true_dither):
-    grads, _loss = generator_gradient_loss(rgb_img, true_dither)
-    grads = u.clip_gradients(grads, theta=opts.gradient_clip)
-    generator_optimiser(learning_rate, grads)
-
-
-generator_train_step = objax.Jit(generator_train_step,
-                                 generator_gradient_loss.vars() + generator_optimiser.vars())
 
 
 def discriminator_loss(rgb_img, true_dither):
@@ -127,43 +95,34 @@ def discriminator_loss(rgb_img, true_dither):
              'true_dither_loss': jnp.mean(true_dither_loss)})
 
 
-discriminator_gradient_loss = objax.GradValues(
-    discriminator_loss, discriminator.vars())
+def build_train_step_fn(model, loss_fn):
+    gradient_loss = objax.GradValues(loss_fn, model.vars())
+    optimiser = objax.optimizer.Adam(model.vars())
 
-discriminator_optimiser = objax.optimizer.Adam(discriminator.vars())
+    def train_step(learning_rate, rgb_img, true_dither):
+        grads, _loss = gradient_loss(rgb_img, true_dither)
+        grads = u.clip_gradients(grads, theta=opts.gradient_clip)
+        optimiser(learning_rate, grads)
+#       grad_norms = [jnp.linalg.norm(g) for g in grads]
+#       return grad_norms
 
-
-def discriminator_train_step(learning_rate, rgb_img, true_dither):
-    grads, _loss = discriminator_gradient_loss(rgb_img, true_dither)
-    grads = u.clip_gradients(grads, theta=opts.gradient_clip)
-    discriminator_optimiser(learning_rate, grads)
-
-
-discriminator_train_step = objax.Jit(discriminator_train_step,
-                                     discriminator_gradient_loss.vars() + discriminator_optimiser.vars())
-
-
-def predict(rgb_imgs):
-    return generator(rgb_imgs, training=False)
+    train_step = objax.Jit(train_step, gradient_loss.vars() + optimiser.vars())
+    return train_step
 
 
-predict = objax.Jit(predict, generator.vars())
+generator_train_step = build_train_step_fn(
+    generator, generator_loss)
 
+discriminator_train_step = build_train_step_fn(
+    discriminator, discriminator_loss)
 
+# create learning rate utilities
 generator_learning_rate = u.ValueFromFile(
     "generator_learning_rate.txt", 1e-3)
 discriminator_learning_rate = u.ValueFromFile(
     "discriminator_learning_rate.txt", 1e-3)
 
-# improvement_tracking = u.ImprovementTracking(patience=10, smoothing=0.5)
-
-# for debug images
-u.ensure_dir_exists("test/%s" % RUN)
-if os.path.exists("test/latest"):
-    os.remove("test/latest")
-os.symlink(RUN, "test/latest")
-
-# load some full res images for checking model performance
+# load some full res images for checking model performance during training
 full_rgbs = []
 full_true_dithers = []
 for frame in [5000, 43000, 67000, 77000]:
@@ -174,20 +133,35 @@ for frame in [5000, 43000, 67000, 77000]:
 full_rgbs = np.stack(full_rgbs)
 full_true_dithers = np.stack(full_true_dithers)
 
+# jit the generator now (we'll use it for predicting against the full res
+# images) and also the two loss fns
+generator = objax.Jit(generator)
+generator_loss = objax.Jit(generator_loss, generator.vars())
+discriminator_loss = objax.Jit(discriminator_loss, discriminator.vars())
+
+# setup output directory for full res samples
+u.ensure_dir_exists("full_res_samples/%s" % RUN)
+if os.path.exists("full_res_samples/latest"):
+    os.remove("full_res_samples/latest")
+os.symlink(RUN, "full_res_samples/latest")
+
+# init dataset iterator
 dataset = data.dataset(manifest_file=opts.manifest_file,
                        batch_size=opts.batch_size)
 
+# set up ckpting for G and D
 generator_ckpt = objax.io.Checkpoint(
     logdir=f"ckpts/{RUN}/generator/", keep_ckpts=20)
 discriminator_ckpt = objax.io.Checkpoint(
     logdir=f"ckpts/{RUN}/discriminator/", keep_ckpts=20)
 
+# run training loop!
 for epoch in range(opts.epochs):
 
     # g_min_max = None
 
+    # run some number of steps, alternating between training G and D
     train_generator = True
-
     for rgb_imgs, true_dithers in dataset.take(opts.steps_per_epoch):
         rgb_imgs = rgb_imgs.numpy()
         true_dithers = true_dithers.numpy()
@@ -208,12 +182,11 @@ for epoch in range(opts.epochs):
 
         train_generator = not train_generator
 
-    # ckpt
+    # ckpt models
     generator_ckpt.save(generator.vars(), idx=epoch)
     discriminator_ckpt.save(discriminator.vars(), idx=epoch)
 
-    # check loss against last batch as well as sample batch
-    # TODO: ensure jitted
+    # check loss against last batch
     overall_loss, component_losses = generator_loss(rgb_imgs, true_dithers)
     generator_losses = {
         'overall_loss': float(overall_loss),
@@ -227,15 +200,15 @@ for epoch in range(opts.epochs):
         'true_dither_loss': float(component_losses['true_dither_loss'])
     }
 
-    # save sample rgb, true dith and pred dither in collage.
+    # save full res sample rgb, true dither and pred dither in a collage.
     if epoch % 10 == 0:
-        full_pred_dithers = predict(full_rgbs)
+        full_pred_dithers = generator(full_rgbs)
         samples = []
         for r, t, p in zip(full_rgbs, full_true_dithers, full_pred_dithers):
             triplet = [u.rgb_img_to_pil(r), u.dither_to_pil(t),
                        u.dither_to_pil(p)]
             samples.append(u.collage(triplet, side_by_side=True))
-        u.collage(samples).save("test/%s/%05d.png" % (RUN, epoch))
+        u.collage(samples).save("full_res_samples/%s/%05d.png" % (RUN, epoch))
 
     # some wandb logging
     wandb.log({
@@ -249,10 +222,7 @@ for epoch in range(opts.epochs):
         'discriminator_learning_rate': discriminator_learning_rate.value()
     }, step=epoch)
 
-    # if not improvement_tracking.improved(loss):
-    #     learning_rate /= 2
-    #     improvement_tracking.reset()
-
+    # some stdout logging
     print("epoch", epoch,
           "generator_learning_rate", generator_learning_rate.value(),
           "discriminator_learning_rate", discriminator_learning_rate.value(),
