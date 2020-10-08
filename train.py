@@ -1,5 +1,6 @@
 import objax
-import models
+import generator as g
+import discriminator as d
 import jax.numpy as jnp
 from objax.functional import sigmoid
 from objax.functional.loss import sigmoid_cross_entropy_logits
@@ -28,8 +29,8 @@ RUN = u.DTS()
 
 wandb.init(project='dither_net', group='v1', name=RUN)
 
-generator = models.Generator()
-discriminator = models.Discriminator()
+generator = g.Generator()
+discriminator = d.Discriminator()
 
 print("generator", generator.vars())
 print("discriminator", discriminator.vars())

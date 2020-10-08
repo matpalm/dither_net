@@ -1,14 +1,9 @@
-
-import jax
 import jax.numpy as jnp
-import objax
-from objax.nn.init import xavier_normal
 from jax.nn.functions import gelu
-from PIL import Image
-import numpy as np
-import util as u
-from objax.nn import Conv2D, ConvTranspose2D, Sequential, BatchNorm2D
-
+from objax.nn import Conv2D
+import objax
+from jax.lax import conv_transpose
+from objax.nn.init import xavier_normal
 
 DEBUG = False
 
@@ -20,8 +15,8 @@ def _upsample_nearest_neighbour(inputs_nchw):
     flat_inputs = jnp.reshape(inputs_nchw, flat_inputs_shape)
     resize_kernel = jnp.ones((2, 2, 1, 1))
     strides = (2, 2)
-    flat_outputs = jax.lax.conv_transpose(
-        flat_inputs, resize_kernel, strides, padding="SAME")
+    flat_outputs = conv_transpose(flat_inputs, resize_kernel, strides,
+                                  padding="SAME")
     outputs_nchw_shape = (-1, input_c, 2 * h, 2 * w)
     outputs_nchw = jnp.reshape(flat_outputs, outputs_nchw_shape)
     return outputs_nchw
@@ -155,19 +150,3 @@ class Generator(objax.Module):
         if DEBUG:
             print("l", logits.shape)
         return logits.transpose((0, 2, 3, 1))
-
-
-class Discriminator(objax.Module):
-    def __init__(self):
-        self.model = Sequential(
-            [Conv2D(1, 8, strides=2, k=5, use_bias=False),
-             BatchNorm2D(8), gelu,
-             Conv2D(8, 16, strides=2, k=3, use_bias=False),
-             BatchNorm2D(16), gelu,
-             Conv2D(16, 16, strides=2, k=3, use_bias=False),
-             BatchNorm2D(16), gelu,
-             Conv2D(16, 1, strides=1, k=1)])  # logits
-
-    def __call__(self, x, training):
-        x = x.transpose((0, 3, 1, 2))
-        return self.model(x, training=training)
