@@ -7,7 +7,7 @@ from jax.nn.functions import gelu
 from PIL import Image
 import numpy as np
 import util as u
-from objax.nn import Conv2D, ConvTranspose2D, Sequential
+from objax.nn import Conv2D, ConvTranspose2D, Sequential, BatchNorm2D
 
 
 def _upsample_nearest_neighbour(inputs_nchw):
@@ -124,14 +124,14 @@ class Generator(objax.Module):
 
         self.encoders = objax.ModuleList()
         k = 7
-        for num_output_channels in [8, 8]:  # 32, 64, 128, 128, 128]:
+        for num_output_channels in [32, 64, 128]:  # 32, 64, 128, 128, 128]:
             self.encoders.append(EncoderBlock(
                 num_channels, num_output_channels, k))
             k = 3
             num_channels = num_output_channels
 
         self.decoders = objax.ModuleList()
-        for num_output_channels in [8, 8]:  # , 128, 64, 32, 16]:
+        for num_output_channels in [64, 32, 16]:  # , 128, 64, 32, 16]:
             self.decoders.append(DecoderBlock(
                 num_channels, num_output_channels))
             num_channels = num_output_channels
@@ -159,7 +159,7 @@ class Generator(objax.Module):
                 print(">d_%d" % d_idx)
             enc = None
             if d_idx < len(self.decoders)-1:
-                enc = encoded[-d_idx]
+                enc = encoded[-d_idx-2]
             y = decoder(y, enc, training)
             if DEBUG:
                 print("<d_%d" % d_idx)
@@ -173,12 +173,17 @@ class Generator(objax.Module):
 
 class Discriminator(objax.Module):
     def __init__(self):
-        logits = Conv2D(8, 1, strides=1, k=1)
-        self.model = Sequential([Conv2D(1, 8, strides=2, k=5), gelu,
-                                 Conv2D(8, 8, strides=2, k=3), gelu,
-                                 Conv2D(8, 8, strides=2, k=3), gelu,
-                                 logits])
+        self.model = Sequential(
+            [Conv2D(1, 8, strides=2, k=5, use_bias=False),
+             BatchNorm2D(8), gelu,
+             Conv2D(8, 16, strides=2, k=3, use_bias=False),
+             BatchNorm2D(16), gelu,
+             Conv2D(16, 32, strides=2, k=3, use_bias=False),
+             BatchNorm2D(32), gelu,
+             Conv2D(32, 64, strides=2, k=3, use_bias=False),
+             BatchNorm2D(64), gelu,
+             Conv2D(64, 1, strides=1, k=1)])  # logits
 
-    def __call__(self, x):  # , _training):
+    def __call__(self, x, training):
         x = x.transpose((0, 3, 1, 2))
-        return self.model(x)
+        return self.model(x, training=training)
