@@ -12,6 +12,8 @@ import data
 import argparse
 import os
 
+JIT = True
+
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--manifest-file', type=str)
@@ -22,6 +24,7 @@ parser.add_argument('--steps-per-epoch', type=int)
 parser.add_argument('--positive-weight', type=float, default=1.0)
 parser.add_argument('--reconstruction-loss-weight', type=float, default=1.0)
 parser.add_argument('--discriminator-loss-weight', type=float, default=1.0)
+parser.add_argument('--generator-sigmoid-b', type=float, default=1.0)
 opts = parser.parse_args()
 print(opts)
 
@@ -36,6 +39,17 @@ print("generator", generator.vars())
 print("discriminator", discriminator.vars())
 
 
+def steep_sigmoid(x):
+    # since D from true_dithers only sees (0, 1) we want to make it's
+    # job harder for fake_dithers by squashing the sigmoid activation towards
+    # 0 & 1. simplest way to do this is by varying B in the generalised
+    # logisitic function. this is handy since that makes it just a function on
+    # x, so we can continue to use the numerically stable jax.special.expit
+    # that objax.sigmoid wraps.
+    # see https://en.wikipedia.org/wiki/Generalised_logistic_function
+    return sigmoid(opts.generator_sigmoid_b * x)
+
+
 def generator_loss(rgb_img, true_dither):
     # generator loss is based on the generated images from the RGB and is
     # composed of two components...
@@ -48,8 +62,8 @@ def generator_loss(rgb_img, true_dither):
     reconstruction_loss = jnp.mean(loss_weight * per_pixel_reconstruction_loss)
 
     # 2) how well it fools the discriminator
-    discriminator_logits = discriminator(sigmoid(pred_dither_logits),
-                                         training=False)
+    pred_dither = steep_sigmoid(pred_dither_logits)
+    discriminator_logits = discriminator(pred_dither, training=False)
     per_patch_loss = sigmoid_cross_entropy_logits(
         logits=discriminator_logits,
         labels=jnp.ones_like(discriminator_logits))
@@ -70,18 +84,15 @@ def discriminator_loss(rgb_img, true_dither):
 
     # discriminator loss is based on discriminator's ability to distinguish
     # fake dithers...
-    fake_dither = sigmoid(generator(rgb_img))
+    fake_dither = steep_sigmoid(generator(rgb_img))
     discriminator_logits = discriminator(fake_dither, training=True)
-    # print("FAKE discriminator_logits", jnp.around(
-    #     sigmoid(discriminator_logits).flatten(), 2))
     fake_dither_loss = sigmoid_cross_entropy_logits(
         logits=discriminator_logits,
         labels=jnp.zeros_like(discriminator_logits))
 
-    # ... from true dithers
-    discriminator_logits = discriminator(true_dither, training=True)
-    # print("TRUE discriminator_logits", jnp.around(
-    #     sigmoid(discriminator_logits).flatten(), 2))
+    # ... from (smoothed) true dithers
+    smoothed_true_dither = (true_dither * 0.8) + 0.1
+    discriminator_logits = discriminator(smoothed_true_dither, training=True)
     true_dither_loss = sigmoid_cross_entropy_logits(
         logits=discriminator_logits,
         labels=jnp.ones_like(discriminator_logits))
@@ -103,10 +114,12 @@ def build_train_step_fn(model, loss_fn):
         grads, _loss = gradient_loss(rgb_img, true_dither)
         grads = u.clip_gradients(grads, theta=opts.gradient_clip)
         optimiser(learning_rate, grads)
-#       grad_norms = [jnp.linalg.norm(g) for g in grads]
-#       return grad_norms
+        grad_norms = [jnp.linalg.norm(g) for g in grads]
+        return grad_norms
 
-    train_step = objax.Jit(train_step, gradient_loss.vars() + optimiser.vars())
+    if JIT:
+        train_step = objax.Jit(
+            train_step, gradient_loss.vars() + optimiser.vars())
     return train_step
 
 
@@ -125,7 +138,7 @@ discriminator_learning_rate = u.ValueFromFile(
 # load some full res images for checking model performance during training
 full_rgbs = []
 full_true_dithers = []
-for frame in [5000, 43000, 67000, 77000]:
+for frame in [5000, 43000, 55000, 67000, 77000, 90000]:
     full_rgb, full_true_dither = data.parse_full_size(
         "frames/full_res/f_%08d.jpg" % frame)
     full_rgbs.append(full_rgb)
@@ -135,9 +148,10 @@ full_true_dithers = np.stack(full_true_dithers)
 
 # jit the generator now (we'll use it for predicting against the full res
 # images) and also the two loss fns
-generator = objax.Jit(generator)
-generator_loss = objax.Jit(generator_loss, generator.vars())
-discriminator_loss = objax.Jit(discriminator_loss, discriminator.vars())
+if JIT:
+    generator = objax.Jit(generator)
+    generator_loss = objax.Jit(generator_loss, generator.vars())
+    discriminator_loss = objax.Jit(discriminator_loss, discriminator.vars())
 
 # setup output directory for full res samples
 u.ensure_dir_exists("full_res_samples/%s" % RUN)
@@ -158,7 +172,8 @@ discriminator_ckpt = objax.io.Checkpoint(
 # run training loop!
 for epoch in range(opts.epochs):
 
-    # g_min_max = None
+    generator_grads_min_max = None
+    discriminator_grads_min_max = None
 
     # run some number of steps, alternating between training G and D
     train_generator = True
@@ -174,17 +189,27 @@ for epoch in range(opts.epochs):
         #                  float(jnp.max(grad_norms)))
         # else:
         if train_generator:
-            generator_train_step(
+            grad_norms = generator_train_step(
                 generator_learning_rate.value(), rgb_imgs, true_dithers)
+            if generator_grads_min_max is None:
+                generator_grads_min_max = (float(jnp.min(grad_norms)),
+                                           float(jnp.max(grad_norms)))
         else:
-            discriminator_train_step(
+            grad_norms = discriminator_train_step(
                 discriminator_learning_rate.value(), rgb_imgs, true_dithers)
-
+            if discriminator_grads_min_max is None:
+                discriminator_grads_min_max = (float(jnp.min(grad_norms)),
+                                               float(jnp.max(grad_norms)))
         train_generator = not train_generator
 
     # ckpt models
     generator_ckpt.save(generator.vars(), idx=epoch)
     discriminator_ckpt.save(discriminator.vars(), idx=epoch)
+
+    # log range of values from generator
+    fake_dither = steep_sigmoid(generator(rgb_imgs))
+    range_of_dithers = jnp.around(jnp.percentile(
+        fake_dither, jnp.linspace(0, 100, 11)), 2)
 
     # check loss against last batch
     overall_loss, component_losses = generator_loss(rgb_imgs, true_dithers)
@@ -200,14 +225,10 @@ for epoch in range(opts.epochs):
         'true_dither_loss': float(component_losses['true_dither_loss'])
     }
 
-    # save full res sample rgb, true dither and pred dither in a collage.
+    # save full res pred dithers in a collage.
     if epoch % 10 == 0:
         full_pred_dithers = generator(full_rgbs)
-        samples = []
-        for r, t, p in zip(full_rgbs, full_true_dithers, full_pred_dithers):
-            triplet = [u.rgb_img_to_pil(r), u.dither_to_pil(t),
-                       u.dither_to_pil(p)]
-            samples.append(u.collage(triplet, side_by_side=True))
+        samples = [u.dither_to_pil(p) for p in full_pred_dithers]
         u.collage(samples).save("full_res_samples/%s/%05d.png" % (RUN, epoch))
 
     # some wandb logging
@@ -219,7 +240,11 @@ for epoch in range(opts.epochs):
         'discrim_fake_dither_loss': discriminator_losses['fake_dither_loss'],
         'discrim_true_dither_loss': discriminator_losses['true_dither_loss'],
         'generator_learning_rate': generator_learning_rate.value(),
-        'discriminator_learning_rate': discriminator_learning_rate.value()
+        'discriminator_learning_rate': discriminator_learning_rate.value(),
+        'generator_grad_norm_min': generator_grads_min_max[0],
+        'generator_grad_norm_max': generator_grads_min_max[1],
+        'discriminator_grad_norm_min': discriminator_grads_min_max[0],
+        'discriminator_grad_norm_max': discriminator_grads_min_max[1]
     }, step=epoch)
 
     # some stdout logging
@@ -227,4 +252,7 @@ for epoch in range(opts.epochs):
           "generator_learning_rate", generator_learning_rate.value(),
           "discriminator_learning_rate", discriminator_learning_rate.value(),
           "generator_losses", generator_losses,
-          'discriminator_losses', discriminator_losses)
+          "generator_grads_min_max", generator_grads_min_max,
+          "discriminator_losses", discriminator_losses,
+          "discriminator_grads_min_max", discriminator_grads_min_max,
+          "range_of_dithers", range_of_dithers)

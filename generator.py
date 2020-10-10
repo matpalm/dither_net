@@ -25,9 +25,9 @@ def _upsample_nearest_neighbour(inputs_nchw):
 class EncoderBlock(objax.Module):
 
     def __init__(self, nin, nout, k):
-        self.shortcut = Conv2D(nin, nout, strides=2, k=1)
-        self.conv1 = Conv2D(nin, nout, strides=1, k=k)
-        self.conv2 = Conv2D(nout, nout, strides=2, k=3)
+        self.shortcut = Conv2D(nin, nout, strides=2, k=3)
+        self.conv1 = Conv2D(nin, nout, strides=2, k=k)
+        self.conv2 = Conv2D(nout, nout, strides=1, k=3)
 
     def __call__(self, x):
         if DEBUG:
@@ -56,7 +56,7 @@ class EncoderBlock(objax.Module):
 class DecoderBlock(objax.Module):
 
     def __init__(self, nin, nout):
-        self.shortcut = Conv2D(nin, nout, strides=1, k=1)
+        self.shortcut = Conv2D(nin, nout, strides=1, k=3)
         self.conv1 = Conv2D(nin, nout, strides=1, k=3)
         self.conv2 = Conv2D(nout, nout, strides=1, k=3)
         self.skip_conv = Conv2D(2*nout, nout, strides=1, k=1)
@@ -85,7 +85,7 @@ class DecoderBlock(objax.Module):
             y = jnp.concatenate([y, encoded], axis=1)
             if DEBUG:
                 print("skip_concat", y.shape)
-            y = self.skip_conv(y)
+            y = gelu(self.skip_conv(y))
             if DEBUG:
                 print("skip_conv", y.shape)
 
@@ -105,19 +105,18 @@ class Generator(objax.Module):
 
         self.encoders = objax.ModuleList()
         k = 7
-        for num_output_channels in [32, 64, 128]:  # 32, 64, 128, 128, 128]:
+        for num_output_channels in [32, 64, 64, 64]:
             self.encoders.append(EncoderBlock(
                 num_channels, num_output_channels, k))
             k = 3
             num_channels = num_output_channels
 
         self.decoders = objax.ModuleList()
-        for num_output_channels in [64, 32, 16]:  # , 128, 64, 32, 16]:
+        for num_output_channels in [64, 64, 32, 16]:
             self.decoders.append(DecoderBlock(
                 num_channels, num_output_channels))
             num_channels = num_output_channels
 
-        #self.logits_bn = BatchNorm2D(num_channels)
         self.logits = Conv2D(num_channels, nout=1,
                              strides=1, k=1, w_init=xavier_normal)
 

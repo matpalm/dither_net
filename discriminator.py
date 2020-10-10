@@ -11,9 +11,11 @@ class Discriminator(objax.Module):
              BatchNorm2D(8), gelu,
              Conv2D(8, 16, strides=2, k=3, use_bias=False),
              BatchNorm2D(16), gelu,
-             Conv2D(16, 16, strides=2, k=3, use_bias=False),
-             BatchNorm2D(16), gelu,
-             Conv2D(16, 1, strides=1, k=1, w_init=xavier_normal)])  # logits
+             Conv2D(16, 32, strides=2, k=3, use_bias=False),
+             BatchNorm2D(32), gelu,
+             Conv2D(32, 64, strides=2, k=3, use_bias=False),
+             BatchNorm2D(64), gelu,
+             Conv2D(64, 1, strides=1, k=1, w_init=xavier_normal)])  # logits
 
     def __call__(self, x, training):
         x = x.transpose((0, 3, 1, 2))
