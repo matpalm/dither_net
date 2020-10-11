@@ -11,6 +11,7 @@ import wandb
 import data
 import argparse
 import os
+import time
 
 JIT = True
 
@@ -20,6 +21,8 @@ parser.add_argument('--manifest-file', type=str)
 parser.add_argument('--batch-size', type=int)
 parser.add_argument('--gradient-clip', type=float, default=1.0)
 parser.add_argument('--epochs', type=int, default=10000)
+parser.add_argument('--max-run-time', type=int, default=None,
+                    help='max run time in secs')
 parser.add_argument('--steps-per-epoch', type=int)
 parser.add_argument('--positive-weight', type=float, default=1.0)
 parser.add_argument('--reconstruction-loss-weight', type=float, default=1.0)
@@ -27,6 +30,10 @@ parser.add_argument('--discriminator-loss-weight', type=float, default=1.0)
 parser.add_argument('--generator-sigmoid-b', type=float, default=1.0)
 opts = parser.parse_args()
 print(opts)
+
+finish_time = None
+if opts.max_run_time is not None and opts.max_run_time > 0:
+    finish_time = time.time() + opts.max_run_time
 
 RUN = u.DTS()
 
@@ -256,3 +263,6 @@ for epoch in range(opts.epochs):
           "discriminator_losses", discriminator_losses,
           "discriminator_grads_min_max", discriminator_grads_min_max,
           "range_of_dithers", range_of_dithers)
+
+    if finish_time is not None and time.time() > finish_time:
+        break
