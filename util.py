@@ -21,8 +21,8 @@ def rgb_img_to_pil(rgb_img):
     return Image.fromarray(rgb_img)
 
 
-def dither_to_pil(dither):
-    lit_pixels = dither[:, :, 0] > 0
+def dither_to_pil(dither, threshold=0):
+    lit_pixels = dither[:, :, 0] > threshold
     lit_pixels = np.where(lit_pixels, 255, 0).astype(np.uint8)
     return Image.fromarray(np.array(lit_pixels), 'L')
 
