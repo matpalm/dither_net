@@ -3,7 +3,7 @@ import generator as g
 import discriminator as d
 import jax.numpy as jnp
 from objax.functional import sigmoid
-from objax.functional.loss import sigmoid_cross_entropy_logits
+#from objax.functional.loss import sigmoid_cross_entropy_logits, mean_absolute_error
 from PIL import Image
 import numpy as np
 import util as u
@@ -62,16 +62,14 @@ def steep_sigmoid(x):
 def generator_loss(rgb_img, true_dither):
     # generator loss is based on the generated images from the RGB and is
     # composed of two components...
-    pred_dither_logits = generator(rgb_img)
+    pred_dither = steep_sigmoid(generator(rgb_img))
 
     # 1) a comparison to the true_dither to see how well it reconstructs it
-    per_pixel_reconstruction_loss = sigmoid_cross_entropy_logits(
-        pred_dither_logits, true_dither)
+    per_pixel_reconstruction_loss = jnp.abs(pred_dither - true_dither)
     loss_weight = jnp.where(true_dither == 1, opts.positive_weight, 1.0)
     reconstruction_loss = jnp.mean(loss_weight * per_pixel_reconstruction_loss)
 
     # 2) how well it fools the discriminator
-    pred_dither = steep_sigmoid(pred_dither_logits)
     discriminator_logits = discriminator(pred_dither, training=False)
     overall_patch_loss = -jnp.mean(discriminator_logits)
 
@@ -237,10 +235,9 @@ for epoch in range(opts.epochs):
     }
 
     # save full res pred dithers in a collage.
-    if epoch % 10 == 0:
-        full_pred_dithers = generator(full_rgbs)
-        samples = [u.dither_to_pil(p) for p in full_pred_dithers]
-        u.collage(samples).save("full_res_samples/%s/%05d.png" % (RUN, epoch))
+    full_pred_dithers = generator(full_rgbs)
+    samples = [u.dither_to_pil(p) for p in full_pred_dithers]
+    u.collage(samples).save("full_res_samples/%s/%05d.png" % (RUN, epoch))
 
     # some wandb logging
     wandb.log({
