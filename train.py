@@ -28,6 +28,8 @@ parser.add_argument('--positive-weight', type=float, default=1.0)
 parser.add_argument('--reconstruction-loss-weight', type=float, default=1.0)
 parser.add_argument('--discriminator-loss-weight', type=float, default=1.0)
 parser.add_argument('--generator-sigmoid-b', type=float, default=1.0)
+parser.add_argument('--discriminator-weight-clip', type=float, default=0.1)
+
 opts = parser.parse_args()
 print(opts)
 
@@ -71,18 +73,17 @@ def generator_loss(rgb_img, true_dither):
     # 2) how well it fools the discriminator
     pred_dither = steep_sigmoid(pred_dither_logits)
     discriminator_logits = discriminator(pred_dither, training=False)
-    per_patch_loss = sigmoid_cross_entropy_logits(
-        logits=discriminator_logits,
-        labels=jnp.ones_like(discriminator_logits))
-    overall_patch_loss = jnp.mean(per_patch_loss)
+    overall_patch_loss = -jnp.mean(discriminator_logits)
 
     # overall loss is weighted combination of the two
     overall_loss = (reconstruction_loss * opts.reconstruction_loss_weight +
                     overall_patch_loss * opts.discriminator_loss_weight)
 
     return (overall_loss,
-            {'reconstruction_loss': reconstruction_loss,
-             'overall_patch_loss': overall_patch_loss})
+            {'reconstruction_loss':
+             reconstruction_loss * opts.reconstruction_loss_weight,
+             'overall_patch_loss':
+             overall_patch_loss * opts.discriminator_loss_weight})
 
 
 def discriminator_loss(rgb_img, true_dither):
@@ -90,27 +91,22 @@ def discriminator_loss(rgb_img, true_dither):
         raise Exception("expected equal number of RGB imgs & dithers")
 
     # discriminator loss is based on discriminator's ability to distinguish
-    # fake dithers...
-    fake_dither = steep_sigmoid(generator(rgb_img))
-    discriminator_logits = discriminator(fake_dither, training=True)
-    fake_dither_loss = sigmoid_cross_entropy_logits(
-        logits=discriminator_logits,
-        labels=jnp.zeros_like(discriminator_logits))
-
-    # ... from (smoothed) true dithers
+    # (smoothed) true dithers ...
     smoothed_true_dither = (true_dither * 0.8) + 0.1
     discriminator_logits = discriminator(smoothed_true_dither, training=True)
-    true_dither_loss = sigmoid_cross_entropy_logits(
-        logits=discriminator_logits,
-        labels=jnp.ones_like(discriminator_logits))
+    true_dither_loss = jnp.mean(discriminator_logits)
 
-    # overall loss is the mean across them all
-    overall_loss = jnp.mean(jnp.concatenate([fake_dither_loss.flatten(),
-                                             true_dither_loss.flatten()]))
+    # ...from fake dithers
+    fake_dither = steep_sigmoid(generator(rgb_img))
+    discriminator_logits = discriminator(fake_dither, training=True)
+    fake_dither_loss = jnp.mean(discriminator_logits)
+
+    # overall loss is the sum
+    overall_loss = fake_dither_loss - true_dither_loss
 
     return (overall_loss,
-            {'fake_dither_loss': jnp.mean(fake_dither_loss),
-             'true_dither_loss': jnp.mean(true_dither_loss)})
+            {'fake_dither_loss': fake_dither_loss,
+             'true_dither_loss': true_dither_loss})
 
 
 def build_train_step_fn(model, loss_fn):
@@ -207,6 +203,14 @@ for epoch in range(opts.epochs):
             if discriminator_grads_min_max is None:
                 discriminator_grads_min_max = (float(jnp.min(grad_norms)),
                                                float(jnp.max(grad_norms)))
+            # clip D weights. urgh; the is the hacky way to do the lipschitz
+            # constraint; much better to get working with the gradient penalty
+            # for k, v in discriminator.vars().items():
+            #     print(k, jnp.min(v.value), jnp.max(v.value))
+            for v in discriminator.vars().values():
+                v.assign(jnp.clip(v.value,
+                                  -opts.discriminator_weight_clip,
+                                  opts.discriminator_weight_clip))
         train_generator = not train_generator
 
     # ckpt models

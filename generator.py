@@ -105,14 +105,14 @@ class Generator(objax.Module):
 
         self.encoders = objax.ModuleList()
         k = 7
-        for num_output_channels in [32, 64, 64, 64]:
+        for num_output_channels in [32, 64, 128, 128]:
             self.encoders.append(EncoderBlock(
                 num_channels, num_output_channels, k))
             k = 3
             num_channels = num_output_channels
 
         self.decoders = objax.ModuleList()
-        for num_output_channels in [64, 64, 32, 16]:
+        for num_output_channels in [128, 64, 32, 16]:
             self.decoders.append(DecoderBlock(
                 num_channels, num_output_channels))
             num_channels = num_output_channels
