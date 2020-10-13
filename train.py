@@ -3,7 +3,6 @@ import generator as g
 import discriminator as d
 import jax.numpy as jnp
 from objax.functional import sigmoid
-#from objax.functional.loss import sigmoid_cross_entropy_logits, mean_absolute_error
 from PIL import Image
 import numpy as np
 import util as u
@@ -12,6 +11,7 @@ import data
 import argparse
 import os
 import time
+import sys
 
 JIT = True
 
@@ -29,6 +29,8 @@ parser.add_argument('--reconstruction-loss-weight', type=float, default=1.0)
 parser.add_argument('--discriminator-loss-weight', type=float, default=1.0)
 parser.add_argument('--generator-sigmoid-b', type=float, default=1.0)
 parser.add_argument('--discriminator-weight-clip', type=float, default=0.1)
+parser.add_argument('--generator-learning-rate', type=float, default=1e-3)
+parser.add_argument('--discriminator-learning-rate', type=float, default=1e-4)
 
 opts = parser.parse_args()
 print(opts)
@@ -38,14 +40,17 @@ if opts.max_run_time is not None and opts.max_run_time > 0:
     finish_time = time.time() + opts.max_run_time
 
 RUN = u.DTS()
+print(">RUN", RUN)
+sys.stdout.flush()
 
-wandb.init(project='dither_net', group='v1', name=RUN)
+wandb.init(project='dither_net', group='onight_run_2', name=RUN)
 
 generator = g.Generator()
 discriminator = d.Discriminator()
 
 print("generator", generator.vars())
 print("discriminator", discriminator.vars())
+sys.stdout.flush()
 
 
 def steep_sigmoid(x):
@@ -131,10 +136,10 @@ discriminator_train_step = build_train_step_fn(
     discriminator, discriminator_loss)
 
 # create learning rate utilities
-generator_learning_rate = u.ValueFromFile(
-    "generator_learning_rate.txt", 1e-3)
-discriminator_learning_rate = u.ValueFromFile(
-    "discriminator_learning_rate.txt", 1e-3)
+# generator_learning_rate = u.ValueFromFile(
+#     "generator_learning_rate.txt", 1e-3)
+# discriminator_learning_rate = u.ValueFromFile(
+#     "discriminator_learning_rate.txt", 1e-3)
 
 # load some full res images for checking model performance during training
 full_rgbs = []
@@ -171,6 +176,7 @@ discriminator_ckpt = objax.io.Checkpoint(
     logdir=f"ckpts/{RUN}/discriminator/", keep_ckpts=20)
 
 # run training loop!
+# ash_collage_imgs = []
 for epoch in range(opts.epochs):
 
     generator_grads_min_max = None
@@ -191,13 +197,13 @@ for epoch in range(opts.epochs):
         # else:
         if train_generator:
             grad_norms = generator_train_step(
-                generator_learning_rate.value(), rgb_imgs, true_dithers)
+                opts.generator_learning_rate, rgb_imgs, true_dithers)
             if generator_grads_min_max is None:
                 generator_grads_min_max = (float(jnp.min(grad_norms)),
                                            float(jnp.max(grad_norms)))
         else:
             grad_norms = discriminator_train_step(
-                discriminator_learning_rate.value(), rgb_imgs, true_dithers)
+                opts.discriminator_learning_rate, rgb_imgs, true_dithers)
             if discriminator_grads_min_max is None:
                 discriminator_grads_min_max = (float(jnp.min(grad_norms)),
                                                float(jnp.max(grad_norms)))
@@ -237,7 +243,17 @@ for epoch in range(opts.epochs):
     # save full res pred dithers in a collage.
     full_pred_dithers = generator(full_rgbs)
     samples = [u.dither_to_pil(p) for p in full_pred_dithers]
-    u.collage(samples).save("full_res_samples/%s/%05d.png" % (RUN, epoch))
+    collage = u.collage(samples)
+    collage.save("full_res_samples/%s/%05d.png" % (RUN, epoch))
+    collage.save("full_res_samples/last/%s.png" % RUN)
+
+    # sanity check for collapse of all white or all black
+    num_sample_white_pixels = int(jnp.sum(full_pred_dithers > 0))
+    num_sample_black_pixels = int(jnp.sum(full_pred_dithers < 0))
+
+    # collect another image in the ash collage
+    # ash_collage_imgs.append(u.dither_to_pil(full_pred_dithers[3]))
+    # u.collage(ash_collage_imgs).save("full_res_samples/%s/ash.png" % RUN)
 
     # some wandb logging
     wandb.log({
@@ -247,23 +263,34 @@ for epoch in range(opts.epochs):
         'discrim_overall_loss': discriminator_losses['overall_loss'],
         'discrim_fake_dither_loss': discriminator_losses['fake_dither_loss'],
         'discrim_true_dither_loss': discriminator_losses['true_dither_loss'],
-        'generator_learning_rate': generator_learning_rate.value(),
-        'discriminator_learning_rate': discriminator_learning_rate.value(),
+        # 'generator_learning_rate': generator_learning_rate.value(),
+        # 'discriminator_learning_rate': discriminator_learning_rate.value(),
         'generator_grad_norm_min': generator_grads_min_max[0],
         'generator_grad_norm_max': generator_grads_min_max[1],
         'discriminator_grad_norm_min': discriminator_grads_min_max[0],
-        'discriminator_grad_norm_max': discriminator_grads_min_max[1]
+        'discriminator_grad_norm_max': discriminator_grads_min_max[1],
+        'num_sample_white_pixels': num_sample_white_pixels,
+        'num_sample_black_pixels': num_sample_black_pixels
     }, step=epoch)
 
     # some stdout logging
     print("epoch", epoch,
-          "generator_learning_rate", generator_learning_rate.value(),
-          "discriminator_learning_rate", discriminator_learning_rate.value(),
+          # "generator_learning_rate", generator_learning_rate.value(),
+          # "discriminator_learning_rate", discriminator_learning_rate.value(),
           "generator_losses", generator_losses,
           "generator_grads_min_max", generator_grads_min_max,
           "discriminator_losses", discriminator_losses,
           "discriminator_grads_min_max", discriminator_grads_min_max,
-          "range_of_dithers", range_of_dithers)
+          "range_of_dithers", range_of_dithers,
+          'num_sample_white_pixels', num_sample_white_pixels,
+          'num_sample_black_pixels', num_sample_black_pixels)
+
+    sys.stdout.flush()
 
     if finish_time is not None and time.time() > finish_time:
+        print("time up")
+        break
+
+    if num_sample_white_pixels < 100000 or num_sample_black_pixels < 100000:
+        print("model collapse?")
         break
