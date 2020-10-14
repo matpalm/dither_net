@@ -18,6 +18,7 @@ JIT = True
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--manifest-file', type=str)
+parser.add_argument('--group', type=str, default='dft')
 parser.add_argument('--batch-size', type=int)
 parser.add_argument('--gradient-clip', type=float, default=1.0)
 parser.add_argument('--epochs', type=int, default=10000)
@@ -43,7 +44,7 @@ RUN = u.DTS()
 print(">RUN", RUN)
 sys.stdout.flush()
 
-wandb.init(project='dither_net', group='onight_run_2', name=RUN)
+wandb.init(project='dither_net', group=opts.group, name=RUN)
 
 generator = g.Generator()
 discriminator = d.Discriminator()
@@ -291,6 +292,7 @@ for epoch in range(opts.epochs):
         print("time up")
         break
 
-    if num_sample_white_pixels < 100000 or num_sample_black_pixels < 100000:
+    if epoch > 5 and (num_sample_white_pixels < 100000 or
+                      num_sample_black_pixels < 100000):
         print("model collapse?")
         break
