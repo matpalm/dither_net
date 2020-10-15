@@ -1,0 +1,14 @@
+[Unit]
+Description=DitherNet Very Slow Movie Player
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 -u /home/pi/vsmp/vsmp.py --time-between-frames 0
+WorkingDirectory=/home/pi/vsmp/
+StandardOutput=append:/home/pi/vsmp/log.out
+StandardError=append:/home/pi/vsmp/log.err
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target
