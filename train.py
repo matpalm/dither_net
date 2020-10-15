@@ -289,10 +289,10 @@ for epoch in range(opts.epochs):
     sys.stdout.flush()
 
     if finish_time is not None and time.time() > finish_time:
-        print("time up")
+        print("time up", epoch)
         break
 
-    if epoch > 5 and (num_sample_white_pixels < 100000 or
-                      num_sample_black_pixels < 100000):
-        print("model collapse?")
+    if epoch >= 3 and (num_sample_white_pixels < 100000 or
+                       num_sample_black_pixels < 100000):
+        print("model collapse?", epoch)
         break
