@@ -16,24 +16,21 @@ parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--run', type=str)
 parser.add_argument('--ckpt-idx', type=int)
-parser.add_argument('--input-dir', type=str, default='frames/full_res/')
+parser.add_argument('--manifest', type=str, help='list of files to process')
 parser.add_argument('--output-dir', type=str)
+parser.add_argument('--batch-size', type=int, default=8)
 opts = parser.parse_args()
 print(opts)
 
 generator = g.Generator()
-ckpt = objax.io.Checkpoint(logdir=f"ckpts/{opts.run}/", keep_ckpts=10)
-ckpt.restore(generator.vars(), idx=opts.ckpt_idx)
-
 generator = objax.Jit(generator)
+ckpt = objax.io.Checkpoint(logdir=f"ckpts/{opts.run}/generator", keep_ckpts=10)
+ckpt.restore(generator.vars(), idx=opts.ckpt_idx)
 
 
 def fnames():
-    frame = 9230
-    while frame <= 162999:
-        yield "%s/f_%08d.jpg" % (opts.input_dir, frame)
-#        frame += 1000
-        frame += 1
+    for fname in open(opts.manifest, 'r').readlines():
+        yield fname.strip()
 
 
 def parse(fname):
@@ -52,14 +49,18 @@ def just_fname(full_name):
 
 dataset = (tf.data.Dataset.from_generator(fnames, output_types=(tf.string))
            .map(parse, AUTOTUNE)
-           .batch(16))
+           .batch(opts.batch_size)
+           .prefetch(1))
 
 for rgb_imgs, fnames in dataset:
     rgb_imgs = rgb_imgs.numpy()
     fnames = fnames.numpy()
     pred_dithers = generator(rgb_imgs)
     for dither, full_fname in zip(pred_dithers, fnames):
-        just_fname = just_fname(full_fname).replace("jpg", "png")
-        u.dither_to_pil(dither).save("%s/%s" % (opts.output_dir, just_fname))
-    sys.stdout.write("%s                       \r" % just_fname)
+        dest_fname = just_fname(full_fname.decode()).replace("jpg", "png")
+        dither_pil = u.dither_to_pil(dither)
+        dither_pil = u.center_crop(dither_pil, 1448, 1072)
+        dither_pil.save("%s/%s" % (opts.output_dir, dest_fname))
+    sys.stdout.write("%s                       \r" % dest_fname)
     sys.stdout.flush()
+print()

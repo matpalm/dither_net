@@ -60,3 +60,12 @@ def clip_gradients(grads, theta):
     total_grad_norm = jnp.linalg.norm([jnp.linalg.norm(g) for g in grads])
     scale_factor = jnp.minimum(theta / total_grad_norm, 1.)
     return [g * scale_factor for g in grads]
+
+
+def center_crop(img, new_width, new_height):
+    width, height = img.size
+    left = (width - new_width) / 2
+    top = (height - new_height) / 2
+    right = (width + new_width) / 2
+    bottom = (height + new_height) / 2
+    return img.crop((left, top, right, bottom))
