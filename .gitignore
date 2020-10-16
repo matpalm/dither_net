@@ -13,3 +13,5 @@ f_*png
 discriminator_learning_rate.txt
 generator_learning_rate.txt
 ckpts
+dithers
+full_res_samples
