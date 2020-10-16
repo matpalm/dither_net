@@ -8,12 +8,6 @@ from tensorflow.data.experimental import AUTOTUNE
 import util as u
 from functools import lru_cache
 
-# TODO: pack to TFRECORD eventually...
-
-PATCH_SIZE = 64
-
-# @lru_cache(None)
-
 
 def parse_full_size(fname):
     rgb_img = Image.open(fname)
@@ -25,25 +19,25 @@ def parse_full_size(fname):
     return rgb_img, true_dither
 
 
-def parse(fname, crops_per_img=64):
+def parse(fname, patch_size, crops_per_img=64):
     rgb_img, true_dither = parse_full_size(fname)
     w, h = rgb_img.shape[1], rgb_img.shape[0]
     for _ in range(crops_per_img):
-        left = random.randint(0, h-PATCH_SIZE)
-        top = random.randint(0, w-PATCH_SIZE)
-        rgb_crop = rgb_img[left:left+PATCH_SIZE, top:top+PATCH_SIZE, :]
+        left = random.randint(0, h-patch_size)
+        top = random.randint(0, w-patch_size)
+        rgb_crop = rgb_img[left:left+patch_size, top:top+patch_size, :]
         dither_crop = true_dither[left:left +
-                                  PATCH_SIZE, top: top+PATCH_SIZE, :]
+                                  patch_size, top: top+patch_size, :]
         yield rgb_crop, dither_crop
 
 
-def dataset(manifest_file, batch_size, shuffle_buffer_size=4096):
+def dataset(manifest_file, batch_size, patch_size, shuffle_buffer_size=4096):
     def crops():
         fnames = list(map(str.strip, open(manifest_file).readlines()))
         while True:
             random.shuffle(fnames)
             for fname in fnames:
-                for crops in parse(fname):
+                for crops in parse(fname, patch_size):
                     yield crops
 
     return (tf.data.Dataset.from_generator(crops,

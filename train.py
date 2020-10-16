@@ -25,6 +25,7 @@ parser.add_argument('--epochs', type=int, default=10000)
 parser.add_argument('--max-run-time', type=int, default=None,
                     help='max run time in secs')
 parser.add_argument('--steps-per-epoch', type=int)
+parser.add_argument('--patch-size', type=int, default=64)
 parser.add_argument('--positive-weight', type=float, default=1.0)
 parser.add_argument('--reconstruction-loss-weight', type=float, default=1.0)
 parser.add_argument('--discriminator-loss-weight', type=float, default=1.0)
@@ -168,7 +169,8 @@ os.symlink(RUN, "full_res_samples/latest")
 
 # init dataset iterator
 dataset = data.dataset(manifest_file=opts.manifest_file,
-                       batch_size=opts.batch_size)
+                       batch_size=opts.batch_size,
+                       patch_size=opts.patch_size)
 
 # set up ckpting for G and D
 generator_ckpt = objax.io.Checkpoint(
