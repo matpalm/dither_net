@@ -69,3 +69,14 @@ def center_crop(img, new_width, new_height):
     right = (width + new_width) / 2
     bottom = (height + new_height) / 2
     return img.crop((left, top, right, bottom))
+
+
+def read_manifest(manifest_file, has_scene_change):
+    manifest = []
+    for line in map(str.strip, open(manifest_file, 'r').readlines()):
+        if has_scene_change:
+            fname, scene_change = line.split(" ")
+            manifest.append((fname, eval(scene_change)))  # o_O clumsy
+        else:
+            manifest.append(line)
+    return manifest
