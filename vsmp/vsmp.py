@@ -22,10 +22,12 @@ args.add_argument('--use-virtual-display', action='store_true',
                   help='if set then use TK virtual EPD. works on desktop')
 opts = args.parse_args()
 
+
 def log(s):
     datetimestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print("%s: %s" % (datetimestamp, s))
     sys.stdout.flush()
+
 
 log("opts %s" % opts)
 
@@ -40,7 +42,8 @@ if os.path.exists(opts.current_frame_file):
         frame_idx = frames.index(current_frame) + 1
         log("skip to frame_idx %d" % frame_idx)
     except ValueError:
-        raise Exception("current frame [%s] not in manifest [%s] (??)" % (current_frame, opts.manifest))
+        raise Exception("current frame [%s] not in manifest [%s] (??)" % (
+            current_frame, opts.manifest))
 else:
     # otherwise dft to first frame
     frame_idx = 0
@@ -52,11 +55,13 @@ first_display = True
 
 # init display
 if opts.use_virtual_display:
-    display = VirtualEPDDisplay(dims=(1448, 1072)) #, rotate='flip')
+    display = VirtualEPDDisplay(dims=(1448, 1072))  # , rotate='flip')
 else:
     display = AutoEPDDisplay(vcom=-2.25, spi_hz=24000000)
 
 # simpler helper to know when to occasionally force a flashy reset
+
+
 class StdScoreAnomaly(object):
 
     def __init__(self, window_size=50, anomaly_z_threshold=5):
@@ -77,8 +82,9 @@ class StdScoreAnomaly(object):
             return True
         return False
 
+
 pixel_count = StdScoreAnomaly()
-last_redraw_np = None
+last_dither_np = None
 full_redraw = True
 same_pixel_count = None
 
@@ -94,10 +100,10 @@ while frame_idx < len(frames):
     # are the same. if this has shifted a lot declare it a new
     # scene that requires a full redraw
     dither_np = np.array(dither)
-    if last_redraw_np is not None:
-        same_pixel_count = np.sum(dither_np == last_redraw_np)
+    if last_dither_np is not None:
+        same_pixel_count = np.sum(dither_np == last_dither_np)
         full_redraw = pixel_count.anomaly(same_pixel_count)
-    last_redraw_np = dither_np
+    last_dither_np = dither_np
 
     # if doing a full redraw then use full reset, otherwise
     # do partial update (that still sadly results in ghosting)
