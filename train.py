@@ -225,9 +225,9 @@ for epoch in range(opts.epochs):
     discriminator_ckpt.save(discriminator.vars(), idx=epoch)
 
     # log range of values from generator
-    fake_dither = steep_sigmoid(generator(rgb_imgs))
-    range_of_dithers = jnp.around(jnp.percentile(
-        fake_dither, jnp.linspace(0, 100, 11)), 2)
+    # fake_dither = steep_sigmoid(generator(rgb_imgs))
+    # range_of_dithers = jnp.around(jnp.percentile(
+    #     fake_dither, jnp.linspace(0, 100, 11)), 2)
 
     # check loss against last batch
     overall_loss, component_losses = generator_loss(rgb_imgs, true_dithers)
@@ -284,7 +284,7 @@ for epoch in range(opts.epochs):
           "generator_grads_min_max", generator_grads_min_max,
           "discriminator_losses", discriminator_losses,
           "discriminator_grads_min_max", discriminator_grads_min_max,
-          "range_of_dithers", range_of_dithers,
+          # "range_of_dithers", range_of_dithers,
           'num_sample_white_pixels', num_sample_white_pixels,
           'num_sample_black_pixels', num_sample_black_pixels)
 
