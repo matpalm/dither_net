@@ -24,6 +24,8 @@ args.add_argument('--max-redraw-rate', type=int, default=20,
                   help="don't redraw any more frequently that this")
 args.add_argument('--use-virtual-display', action='store_true',
                   help='if set then use TK virtual EPD. works on desktop')
+args.add_argument('--restart', action='store_true',
+                  help='ignore current-frame-file and restart')
 opts = args.parse_args()
 
 
@@ -39,8 +41,12 @@ log("opts %s" % opts)
 frames = list(map(str.strip, open(opts.manifest, 'r').readlines()))
 log("%d frames read from manifest %s" % (len(frames), opts.manifest))
 
-# check to see if we are in progress
-if os.path.exists(opts.current_frame_file):
+# decide which frame to start
+if opts.restart:
+    # forced restart
+    frame_idx = 0
+elif os.path.exists(opts.current_frame_file):
+    # check to see if we are in progress
     current_frame = open(opts.current_frame_file).read().strip()
     try:
         frame_idx = frames.index(current_frame) + 1
