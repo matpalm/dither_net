@@ -19,29 +19,35 @@ def parse_full_size(fname):
     return rgb_img, true_dither
 
 
-def parse(fname, patch_size, crops_per_img=64):
-    rgb_img, true_dither = parse_full_size(fname)
-    w, h = rgb_img.shape[1], rgb_img.shape[0]
+def parse(fname_t0, fname_t1, patch_size, crops_per_img=64):
+    rgb_img_t0, true_dither_t0 = parse_full_size(fname_t0)
+    rgb_img_t1, true_dither_t1 = parse_full_size(fname_t1)
+
+    w, h = rgb_img_t0.shape[1], rgb_img_t0.shape[0]
     for _ in range(crops_per_img):
         left = random.randint(0, h-patch_size)
         top = random.randint(0, w-patch_size)
-        rgb_crop = rgb_img[left:left+patch_size, top:top+patch_size, :]
-        dither_crop = true_dither[left:left +
-                                  patch_size, top: top+patch_size, :]
-        yield rgb_crop, dither_crop
+
+        def crop(img_array):
+            return img_array[left:left+patch_size, top:top+patch_size, :]
+
+        yield (crop(rgb_img_t0), crop(true_dither_t0),
+               crop(rgb_img_t1), crop(true_dither_t1))
 
 
 def dataset(manifest_file, batch_size, patch_size, shuffle_buffer_size=4096):
     def crops():
         fnames = list(map(str.strip, open(manifest_file).readlines()))
+        t0_idxs = list(range(len(fnames)-1))
         while True:
-            random.shuffle(fnames)
-            for fname in fnames:
-                for crops in parse(fname, patch_size):
+            random.shuffle(t0_idxs)
+            for t0_idx in t0_idxs:
+                for crops in parse(fnames[t0_idx], fnames[t0_idx+1],
+                                   patch_size):
                     yield crops
 
-    return (tf.data.Dataset.from_generator(crops,
-                                           output_types=(tf.float32, tf.float32))
+    return (tf.data.Dataset.from_generator(crops, output_types=(tf.float32,
+                                                                tf.float32))
             .shuffle(shuffle_buffer_size)
             .batch(batch_size)
             .prefetch(AUTOTUNE))
@@ -51,14 +57,20 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--fname', type=str)
+    parser.add_argument('--fname-t0', type=str, required=True)
+    parser.add_argument('--fname-t1', type=str, required=True)
     opts = parser.parse_args()
-    rgb, dither = parse(opts.fname)
-    rgb = u.rgb_img_to_pil(rgb)
-    dither = u.dither_to_pil(dither)
-    assert rgb.size == dither.size
-    w, h = rgb.size
-    collage = Image.new('RGB', (w*2, h))
-    collage.paste(rgb, (0, 0))
-    collage.paste(dither, (w, 0))
+    crops = parse(opts.fname_t0, opts.fname_t1,
+                  patch_size=128, crops_per_img=4)
+    rgb_t0, dither_t0, rgb_t1, dither_t1 = next(crops)
+    rgb_t0 = u.rgb_img_to_pil(rgb_t0)
+    rgb_t1 = u.rgb_img_to_pil(rgb_t1)
+    dither_t0 = u.dither_to_pil(dither_t0)
+    dither_t1 = u.dither_to_pil(dither_t1)
+    w, h = rgb_t0.size
+    collage = Image.new('RGB', (w*2, h*2))
+    collage.paste(rgb_t0, (0, 0))
+    collage.paste(dither_t0, (w, 0))
+    collage.paste(rgb_t1, (0, h))
+    collage.paste(dither_t1, (w, h))
     collage.show()
