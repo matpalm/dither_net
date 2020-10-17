@@ -73,7 +73,7 @@ def center_crop(img, new_width, new_height):
     return img.crop((left, top, right, bottom))
 
 
-def frame_num(fname):
+def frame_num_of(fname):
     m = re.match(".*f_(\d*)\.*", fname)
     if m:
         return int(m.group(1))

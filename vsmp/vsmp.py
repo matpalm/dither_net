@@ -14,10 +14,14 @@ args.add_argument('--manifest', type=str,
                   help='list of all files to display',
                   default='manifest.txt')
 args.add_argument('--current-frame-file', type=str,
-                  help='where to save current frame being displayed in case of restart',
+                  help='file to save current frame in case of restart',
                   default='current_frame.txt')
 args.add_argument('--time-between-frames', type=int, default=1,
                   help='time in sec between frames')
+args.add_argument('--min-pixel-diff-for-refresh', type=int, default=100000,
+                  help='trigger redraw if numbers of pixels changed > this')
+args.add_argument('--max-redraw-rate', type=int, default=20,
+                  help="don't redraw any more frequently that this")
 args.add_argument('--use-virtual-display', action='store_true',
                   help='if set then use TK virtual EPD. works on desktop')
 opts = args.parse_args()
@@ -48,10 +52,12 @@ else:
     # otherwise dft to first frame
     frame_idx = 0
 
-# first call should use slower/flashier full update
-# but from then on we can direct update to display just
-# differences
+# first call should use slower/flashier full update but from then on we can
+# direct update to display just differences when possible, but more frequently
+# than once every N frames
 first_display = True
+last_redraw_np = None
+frames_since_last_redraw = 0
 
 # init display
 if opts.use_virtual_display:
@@ -59,56 +65,33 @@ if opts.use_virtual_display:
 else:
     display = AutoEPDDisplay(vcom=-2.25, spi_hz=24000000)
 
-# simpler helper to know when to occasionally force a flashy reset
-
-
-class StdScoreAnomaly(object):
-
-    def __init__(self, window_size=50, anomaly_z_threshold=5):
-        self.window = []
-        self.window_size = window_size
-        self.anomaly_z_threshold = anomaly_z_threshold
-
-    def anomaly(self, v):
-        self.window.append(v)
-        if len(self.window) <= self.window_size+1:
-            return False
-        self.window.pop(0)
-        mean = np.mean(self.window)
-        std = np.std(self.window)
-        z_score = abs(mean - v) / std
-        if z_score > self.anomaly_z_threshold:
-            self.window = []
-            return True
-        return False
-
-
-pixel_count = StdScoreAnomaly()
-last_dither_np = None
-full_redraw = True
-same_pixel_count = None
-
 while frame_idx < len(frames):
 
     fname = frames[frame_idx]
 
     # load dither and paste into frame buffer
     dither = Image.open(fname)
+    dither_np = np.array(dither)
     display.frame_buf.paste(dither, (0, 0))
 
-    # check current frame to last frame and count #pixels that
-    # are the same. if this has shifted a lot declare it a new
-    # scene that requires a full redraw
-    dither_np = np.array(dither)
-    if last_dither_np is not None:
-        same_pixel_count = np.sum(dither_np == last_dither_np)
-        full_redraw = pixel_count.anomaly(same_pixel_count)
-    last_dither_np = dither_np
+    pixel_diff = None
+    if first_display:
+        do_full_redraw = True
+        first_display = False
+    else:
+        # always calc pixel_diff for debugging. note: we actually just care
+        # about pixels that have been white and are now black, that's where we
+        # see the ghosting, not just pixels that differ.
+        pixel_diff = np.sum(last_redraw_np != dither_np)
+        if frames_since_last_redraw < opts.max_redraw_rate:
+            do_full_redraw = False
+        else:
+            do_full_redraw = pixel_diff > opts.min_pixel_diff_for_refresh
 
-    # if doing a full redraw then use full reset, otherwise
-    # do partial update (that still sadly results in ghosting)
-    if full_redraw:
+    if do_full_redraw:
         display.draw_full(constants.DisplayModes.GC16)
+        last_redraw_np = dither_np
+        frames_since_last_redraw = 0
     else:
         display.draw_partial(constants.DisplayModes.DU4)
 
@@ -117,9 +100,12 @@ while frame_idx < len(frames):
         print(fname, file=f)
 
     # log, inc frame count and sleep a bit
-    log("%s %s %s" % (fname, full_redraw, same_pixel_count))
+    log("%s %s %s %s" % (fname, frames_since_last_redraw, pixel_diff,
+                         do_full_redraw))
     frame_idx += 1
+    frames_since_last_redraw += 1
     time.sleep(opts.time_between_frames)
+
 
 # if we get through then remove progress file so we
 # can start again
