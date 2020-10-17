@@ -4,10 +4,13 @@ from PIL import Image
 import numpy as np
 import os
 import argparse
+import json
+import util as u
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--manifest-file', type=str)
+parser.add_argument('--output-json', type=str, default='scene_changes.json')
 opts = parser.parse_args()
 
 
@@ -36,6 +39,8 @@ class StdScoreAnomalyDetector(object):
 pixel_same_count = StdScoreAnomalyDetector()
 fnames = sorted(map(str.strip, open(opts.manifest_file).readlines()))
 
+scene_changes = []
+
 last_dither_np = None
 for fname in fnames:
     rgb_img = Image.open(fname)
@@ -51,4 +56,9 @@ for fname in fnames:
         scene_change = pixel_same_count.anomaly(count)
     last_dither_np = dither_np
 
-    print(fname, scene_change)
+    if scene_change:
+        print(fname)
+        scene_changes.append(u.frame_num(fname))
+
+with open(opts.output_json, 'w') as f:
+    f.write(json.dumps(scene_changes))

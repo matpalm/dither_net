@@ -5,6 +5,8 @@ from PIL import Image
 import os
 import math
 import jax.numpy as jnp
+from collections import namedtuple
+import re
 
 
 def DTS():
@@ -71,12 +73,24 @@ def center_crop(img, new_width, new_height):
     return img.crop((left, top, right, bottom))
 
 
-def read_manifest(manifest_file, has_scene_change):
-    manifest = []
-    for line in map(str.strip, open(manifest_file, 'r').readlines()):
-        if has_scene_change:
-            fname, scene_change = line.split(" ")
-            manifest.append((fname, eval(scene_change)))  # o_O clumsy
-        else:
-            manifest.append(line)
-    return manifest
+def frame_num(fname):
+    m = re.match(".*f_(\d*)\.*", fname)
+    if m:
+        return int(m.group(1))
+    else:
+        raise Exception("no frame num in fname [%s]" % fname)
+
+
+# ManifestEntry = namedtuple('ManifestEntry', 'fname scene_change')
+
+
+# def read_manifest(manifest_file, has_scene_change):
+#     manifest = []
+#     for line in map(str.strip, open(manifest_file, 'r').readlines()):
+#         if has_scene_change:
+
+#             fname, scene_change = line.split(" ")
+#             manifest.append(ManifestEntry(fname, eval(scene_change)))
+#         else:
+#             manifest.append(line)
+#     return manifest
