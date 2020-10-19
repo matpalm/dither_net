@@ -28,6 +28,7 @@ parser.add_argument('--steps-per-epoch', type=int)
 parser.add_argument('--patch-size', type=int, default=64)
 parser.add_argument('--positive-weight', type=float, default=1.0)
 parser.add_argument('--reconstruction-loss-weight', type=float, default=1.0)
+parser.add_argument('--change-loss-weight', type=float, default=0.0)
 parser.add_argument('--discriminator-loss-weight', type=float, default=1.0)
 parser.add_argument('--generator-sigmoid-b', type=float, default=1.0)
 parser.add_argument('--discriminator-weight-clip', type=float, default=0.1)
@@ -46,6 +47,15 @@ print(">RUN", RUN)
 sys.stdout.flush()
 
 wandb.init(project='dither_net', group=opts.group, name=RUN)
+wandb.config.gradient_clip = opts.gradient_clip
+wandb.config.positive_weight = opts.positive_weight
+wandb.config.reconstruction_loss_weight = opts.reconstruction_loss_weight
+wandb.config.change_loss_weight = opts.change_loss_weight
+wandb.config.discriminator_loss_weight = opts.discriminator_loss_weight
+wandb.config.generator_sigmoid_b = opts.generator_sigmoid_b
+wandb.config.discriminator_weight_clip = opts.discriminator_weight_clip
+wandb.config.generator_learning_rate = opts.generator_learning_rate
+wandb.config.discriminator_learning_rate = opts.discriminator_learning_rate
 
 generator = g.Generator()
 discriminator = d.Discriminator()
@@ -66,32 +76,45 @@ def steep_sigmoid(x):
     return sigmoid(opts.generator_sigmoid_b * x)
 
 
-def generator_loss(rgb_img, true_dither):
+def generator_loss(rgb_img_t1, true_dither_t0, true_dither_t1):
     # generator loss is based on the generated images from the RGB and is
     # composed of two components...
-    pred_dither = steep_sigmoid(generator(rgb_img))
+    pred_dither_t1 = steep_sigmoid(generator(rgb_img_t1))
 
-    # 1) a comparison to the true_dither to see how well it reconstructs it
-    per_pixel_reconstruction_loss = jnp.abs(pred_dither - true_dither)
-    loss_weight = jnp.where(true_dither == 1, opts.positive_weight, 1.0)
+    # 1) a comparison to the t1 true_dither to see how well it reconstructs it
+    per_pixel_reconstruction_loss = jnp.abs(pred_dither_t1 - true_dither_t1)
+    loss_weight = jnp.where(true_dither_t1 == 1, opts.positive_weight, 1.0)
     reconstruction_loss = jnp.mean(loss_weight * per_pixel_reconstruction_loss)
 
-    # 2) how well it fools the discriminator
-    discriminator_logits = discriminator(pred_dither, training=False)
+    # 2) a comparison to the t0 true_dither to see how much has changed
+    per_pixel_change_loss = jnp.abs(pred_dither_t1 - true_dither_t0)
+    loss_weight = jnp.where(true_dither_t0 == 1, opts.positive_weight, 1.0)
+    change_loss = jnp.mean(loss_weight * per_pixel_change_loss)
+
+    # 3) how well it fools the discriminator
+    discriminator_logits = discriminator(pred_dither_t1, training=False)
     overall_patch_loss = -jnp.mean(discriminator_logits)
 
     # overall loss is weighted combination of the two
     overall_loss = (reconstruction_loss * opts.reconstruction_loss_weight +
+                    change_loss * opts.change_loss_weight +
                     overall_patch_loss * opts.discriminator_loss_weight)
 
     return (overall_loss,
-            {'reconstruction_loss':
-             reconstruction_loss * opts.reconstruction_loss_weight,
-             'overall_patch_loss':
-             overall_patch_loss * opts.discriminator_loss_weight})
+            {'scaled': {'reconstruction_loss':
+                        reconstruction_loss * opts.reconstruction_loss_weight,
+                        'change_loss':
+                        change_loss * opts.change_loss_weight,
+                        'overall_patch_loss':
+                        overall_patch_loss * opts.discriminator_loss_weight},
+             'unscaled': {'reconstruction_loss': reconstruction_loss,
+                          'change_loss': change_loss,
+                          'overall_patch_loss': overall_patch_loss}})
 
 
-def discriminator_loss(rgb_img, true_dither):
+def discriminator_loss(rgb_img, _true_dither_t0, true_dither):
+    # TODO: https://trello.com/c/rKNz7oUv/41-d-doesnt-need-dithert0
+
     if len(rgb_img) != len(true_dither):
         raise Exception("expected equal number of RGB imgs & dithers")
 
@@ -118,8 +141,9 @@ def build_train_step_fn(model, loss_fn):
     gradient_loss = objax.GradValues(loss_fn, model.vars())
     optimiser = objax.optimizer.Adam(model.vars())
 
-    def train_step(learning_rate, rgb_img, true_dither):
-        grads, _loss = gradient_loss(rgb_img, true_dither)
+    def train_step(learning_rate, rgb_img_t1, true_dither_t0, true_dither_t1):
+        grads, _loss = gradient_loss(
+            rgb_img_t1, true_dither_t0, true_dither_t1)
         grads = u.clip_gradients(grads, theta=opts.gradient_clip)
         optimiser(learning_rate, grads)
         grad_norms = [jnp.linalg.norm(g) for g in grads]
@@ -178,8 +202,10 @@ generator_ckpt = objax.io.Checkpoint(
 discriminator_ckpt = objax.io.Checkpoint(
     logdir=f"ckpts/{RUN}/discriminator/", keep_ckpts=20)
 
+# TODO: D doesn't need _t1 images, so it's training step should pull from
+# another generator only unpacking one pair of images
+
 # run training loop!
-# ash_collage_imgs = []
 for epoch in range(opts.epochs):
 
     generator_grads_min_max = None
@@ -187,33 +213,30 @@ for epoch in range(opts.epochs):
 
     # run some number of steps, alternating between training G and D
     train_generator = True
-    for rgb_imgs, true_dithers in dataset.take(opts.steps_per_epoch):
-        rgb_imgs = rgb_imgs.numpy()
-        true_dithers = true_dithers.numpy()
+    for (rgb_imgs_t1, true_dithers_t0,
+         true_dithers_t1) in dataset.take(opts.steps_per_epoch):
 
-        # collect grad norms once per epoch
-        # if g_min_max is None:
-        #     grad_norms = generator_train_step_with_grad_norms(
-        #         learning_rate.value(), rgb_imgs, true_dithers)
-        #     g_min_max = (float(jnp.min(grad_norms)),
-        #                  float(jnp.max(grad_norms)))
-        # else:
+        rgb_imgs_t1 = rgb_imgs_t1.numpy()
+        true_dithers_t0 = true_dithers_t0.numpy()
+        true_dithers_t1 = true_dithers_t1.numpy()
+
         if train_generator:
             grad_norms = generator_train_step(
-                opts.generator_learning_rate, rgb_imgs, true_dithers)
+                opts.generator_learning_rate, rgb_imgs_t1, true_dithers_t0,
+                true_dithers_t1)
             if generator_grads_min_max is None:
                 generator_grads_min_max = (float(jnp.min(grad_norms)),
                                            float(jnp.max(grad_norms)))
         else:
+            # TODO: https://trello.com/c/rKNz7oUv/41-d-doesnt-need-dithert0
             grad_norms = discriminator_train_step(
-                opts.discriminator_learning_rate, rgb_imgs, true_dithers)
+                opts.generator_learning_rate, rgb_imgs_t1, true_dithers_t0,
+                true_dithers_t1)
             if discriminator_grads_min_max is None:
                 discriminator_grads_min_max = (float(jnp.min(grad_norms)),
                                                float(jnp.max(grad_norms)))
-            # clip D weights. urgh; the is the hacky way to do the lipschitz
+            # clip D weights. urgh; this is the hacky way to do the lipschitz
             # constraint; much better to get working with the gradient penalty
-            # for k, v in discriminator.vars().items():
-            #     print(k, jnp.min(v.value), jnp.max(v.value))
             for v in discriminator.vars().values():
                 v.assign(jnp.clip(v.value,
                                   -opts.discriminator_weight_clip,
@@ -224,19 +247,30 @@ for epoch in range(opts.epochs):
     generator_ckpt.save(generator.vars(), idx=epoch)
     discriminator_ckpt.save(discriminator.vars(), idx=epoch)
 
-    # log range of values from generator
-    # fake_dither = steep_sigmoid(generator(rgb_imgs))
-    # range_of_dithers = jnp.around(jnp.percentile(
-    #     fake_dither, jnp.linspace(0, 100, 11)), 2)
-
     # check loss against last batch
-    overall_loss, component_losses = generator_loss(rgb_imgs, true_dithers)
-    generator_losses = {
+    overall_loss, component_losses = generator_loss(
+        rgb_imgs_t1, true_dithers_t0, true_dithers_t1)
+    generator_losses = {  # clumsy o_O; treemap the float cast?
         'overall_loss': float(overall_loss),
-        'reconstruction_loss': float(component_losses['reconstruction_loss']),
-        'overall_patch_loss': float(component_losses['overall_patch_loss'])
+        'scaled': {
+            'change_loss':
+                float(component_losses['scaled']['change_loss']),
+            'reconstruction_loss':
+                float(component_losses['scaled']['reconstruction_loss']),
+            'overall_patch_loss':
+                float(component_losses['scaled']['overall_patch_loss'])
+        },
+        'unscaled': {
+            'change_loss':
+                float(component_losses['unscaled']['change_loss']),
+            'reconstruction_loss':
+                float(component_losses['unscaled']['reconstruction_loss']),
+            'overall_patch_loss':
+                float(component_losses['unscaled']['overall_patch_loss'])
+        }
     }
-    overall_loss, component_losses = discriminator_loss(rgb_imgs, true_dithers)
+    overall_loss, component_losses = discriminator_loss(
+        rgb_imgs_t1, true_dithers_t0, true_dithers_t1)
     discriminator_losses = {
         'overall_loss': float(overall_loss),
         'fake_dither_loss': float(component_losses['fake_dither_loss']),
@@ -254,20 +288,24 @@ for epoch in range(opts.epochs):
     num_sample_white_pixels = int(jnp.sum(full_pred_dithers > 0))
     num_sample_black_pixels = int(jnp.sum(full_pred_dithers < 0))
 
-    # collect another image in the ash collage
-    # ash_collage_imgs.append(u.dither_to_pil(full_pred_dithers[3]))
-    # u.collage(ash_collage_imgs).save("full_res_samples/%s/ash.png" % RUN)
-
     # some wandb logging
     wandb.log({
         'gen_overall_loss': generator_losses['overall_loss'],
-        'gen_reconstruction_loss': generator_losses['reconstruction_loss'],
-        'gen_overall_patch_loss': generator_losses['overall_patch_loss'],
+        'gen_scaled_reconstruction_loss':
+            generator_losses['scaled']['reconstruction_loss'],
+        'gen_scaled_change_loss':
+            generator_losses['scaled']['change_loss'],
+        'gen_scaled_overall_patch_loss':
+            generator_losses['scaled']['overall_patch_loss'],
+        'gen_unscaled_reconstruction_loss':
+            generator_losses['unscaled']['reconstruction_loss'],
+        'gen_unscaled_change_loss':
+            generator_losses['unscaled']['change_loss'],
+        'gen_unscaled_overall_patch_loss':
+            generator_losses['unscaled']['overall_patch_loss'],
         'discrim_overall_loss': discriminator_losses['overall_loss'],
         'discrim_fake_dither_loss': discriminator_losses['fake_dither_loss'],
         'discrim_true_dither_loss': discriminator_losses['true_dither_loss'],
-        # 'generator_learning_rate': generator_learning_rate.value(),
-        # 'discriminator_learning_rate': discriminator_learning_rate.value(),
         'generator_grad_norm_min': generator_grads_min_max[0],
         'generator_grad_norm_max': generator_grads_min_max[1],
         'discriminator_grad_norm_min': discriminator_grads_min_max[0],
@@ -278,8 +316,6 @@ for epoch in range(opts.epochs):
 
     # some stdout logging
     print("epoch", epoch,
-          # "generator_learning_rate", generator_learning_rate.value(),
-          # "discriminator_learning_rate", discriminator_learning_rate.value(),
           "generator_losses", generator_losses,
           "generator_grads_min_max", generator_grads_min_max,
           "discriminator_losses", discriminator_losses,
@@ -294,7 +330,7 @@ for epoch in range(opts.epochs):
         print("time up", epoch)
         break
 
-    if epoch >= 3 and (num_sample_white_pixels < 100000 or
+    if epoch >= 2 and (num_sample_white_pixels < 100000 or
                        num_sample_black_pixels < 100000):
         print("model collapse?", epoch)
         break

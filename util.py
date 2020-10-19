@@ -79,18 +79,3 @@ def frame_num_of(fname):
         return int(m.group(1))
     else:
         raise Exception("no frame num in fname [%s]" % fname)
-
-
-# ManifestEntry = namedtuple('ManifestEntry', 'fname scene_change')
-
-
-# def read_manifest(manifest_file, has_scene_change):
-#     manifest = []
-#     for line in map(str.strip, open(manifest_file, 'r').readlines()):
-#         if has_scene_change:
-
-#             fname, scene_change = line.split(" ")
-#             manifest.append(ManifestEntry(fname, eval(scene_change)))
-#         else:
-#             manifest.append(line)
-#     return manifest
