@@ -1,0 +1,7 @@
+# https://github.com/GregDMeyer/IT8951
+Pillow
+tensorflow
+jax
+objax
+tqdm
+numpy
