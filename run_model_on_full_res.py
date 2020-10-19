@@ -9,8 +9,8 @@ import argparse
 import util as u
 import tensorflow as tf
 from tensorflow.data.experimental import AUTOTUNE
-import sys
 import re
+import tqdm
 
 parser = argparse.ArgumentParser(
     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -29,7 +29,7 @@ ckpt.restore(generator.vars(), idx=opts.ckpt_idx)
 
 
 def fnames():
-    for fname in open(opts.manifest, 'r').readlines():
+    for fname in tqdm.tqdm(open(opts.manifest, 'r').readlines()):
         yield fname.strip()
 
 
@@ -61,6 +61,3 @@ for rgb_imgs, fnames in dataset:
         dither_pil = u.dither_to_pil(dither)
         dither_pil = u.center_crop(dither_pil, 1448, 1072)
         dither_pil.save("%s/%s" % (opts.output_dir, dest_fname))
-    sys.stdout.write("%s                       \r" % dest_fname)
-    sys.stdout.flush()
-print()
