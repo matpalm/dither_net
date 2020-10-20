@@ -77,10 +77,10 @@ def steep_sigmoid(x):
 
 
 def generator_loss(rgb_img_t1, true_dither_t0, true_dither_t1):
-    # generator loss is based on the generated images from the RGB and is
-    # composed of two components...
-    pred_dither_t1 = steep_sigmoid(generator(rgb_img_t1))
+    # generator loss is based on the generated images from the RGB
+    pred_dither_t1 = steep_sigmoid(generator(rgb_img_t1, true_dither_t0))
 
+    # it's based on two components;
     # 1) a comparison to the t1 true_dither to see how well it reconstructs it
     per_pixel_reconstruction_loss = jnp.abs(pred_dither_t1 - true_dither_t1)
     loss_weight = jnp.where(true_dither_t1 == 1, opts.positive_weight, 1.0)
@@ -112,21 +112,17 @@ def generator_loss(rgb_img_t1, true_dither_t0, true_dither_t1):
                           'overall_patch_loss': overall_patch_loss}})
 
 
-def discriminator_loss(rgb_img, _true_dither_t0, true_dither):
-    # TODO: https://trello.com/c/rKNz7oUv/41-d-doesnt-need-dithert0
-
-    if len(rgb_img) != len(true_dither):
-        raise Exception("expected equal number of RGB imgs & dithers")
-
+def discriminator_loss(rgb_img_t1, true_dither_t0, true_dither_t1):
     # discriminator loss is based on discriminator's ability to distinguish
     # (smoothed) true dithers ...
-    smoothed_true_dither = (true_dither * 0.8) + 0.1
-    discriminator_logits = discriminator(smoothed_true_dither, training=True)
+    smoothed_true_dither_t1 = (true_dither_t1 * 0.8) + 0.1
+    discriminator_logits = discriminator(
+        smoothed_true_dither_t1, training=True)
     true_dither_loss = jnp.mean(discriminator_logits)
 
     # ...from fake dithers
-    fake_dither = steep_sigmoid(generator(rgb_img))
-    discriminator_logits = discriminator(fake_dither, training=True)
+    fake_dither_t1 = steep_sigmoid(generator(rgb_img_t1, true_dither_t0))
+    discriminator_logits = discriminator(fake_dither_t1, training=True)
     fake_dither_loss = jnp.mean(discriminator_logits)
 
     # overall loss is the sum
@@ -161,22 +157,24 @@ generator_train_step = build_train_step_fn(
 discriminator_train_step = build_train_step_fn(
     discriminator, discriminator_loss)
 
-# create learning rate utilities
-# generator_learning_rate = u.ValueFromFile(
-#     "generator_learning_rate.txt", 1e-3)
-# discriminator_learning_rate = u.ValueFromFile(
-#     "discriminator_learning_rate.txt", 1e-3)
-
 # load some full res images for checking model performance during training
-full_rgbs = []
-full_true_dithers = []
-for frame in [5000, 43000, 55000, 67000, 77000, 90000]:
+# first three are sequential frames at a scene change.
+# second three are a mix of lighing conditions; a mix, a light & a dark
+full_rgbs_t1 = []
+full_dithers_t0 = []
+full_dithers_t1 = []
+for frame in [55290, 55291, 55292, 67000, 77000, 90000]:
+    _full_rgb, full_true_dither = data.parse_full_size(
+        "frames/full_res/f_%08d.jpg" % (frame-1))
+    full_dithers_t0.append(full_true_dither)
     full_rgb, full_true_dither = data.parse_full_size(
         "frames/full_res/f_%08d.jpg" % frame)
-    full_rgbs.append(full_rgb)
-    full_true_dithers.append(full_true_dither)
-full_rgbs = np.stack(full_rgbs)
-full_true_dithers = np.stack(full_true_dithers)
+    full_rgbs_t1.append(full_rgb)
+    full_dithers_t1.append(full_true_dither)
+full_rgbs_t1 = np.stack(full_rgbs_t1)
+full_dithers_t0 = np.stack(full_dithers_t0)
+full_dithers_t1 = np.stack(full_dithers_t1)
+
 
 # jit the generator now (we'll use it for predicting against the full res
 # images) and also the two loss fns
@@ -202,9 +200,6 @@ generator_ckpt = objax.io.Checkpoint(
 discriminator_ckpt = objax.io.Checkpoint(
     logdir=f"ckpts/{RUN}/discriminator/", keep_ckpts=20)
 
-# TODO: D doesn't need _t1 images, so it's training step should pull from
-# another generator only unpacking one pair of images
-
 # run training loop!
 for epoch in range(opts.epochs):
 
@@ -228,7 +223,6 @@ for epoch in range(opts.epochs):
                 generator_grads_min_max = (float(jnp.min(grad_norms)),
                                            float(jnp.max(grad_norms)))
         else:
-            # TODO: https://trello.com/c/rKNz7oUv/41-d-doesnt-need-dithert0
             grad_norms = discriminator_train_step(
                 opts.generator_learning_rate, rgb_imgs_t1, true_dithers_t0,
                 true_dithers_t1)
@@ -278,7 +272,7 @@ for epoch in range(opts.epochs):
     }
 
     # save full res pred dithers in a collage.
-    full_pred_dithers = generator(full_rgbs)
+    full_pred_dithers = generator(full_rgbs_t1, full_dithers_t0)
     samples = [u.dither_to_pil(p) for p in full_pred_dithers]
     collage = u.collage(samples)
     collage.save("full_res_samples/%s/%05d.png" % (RUN, epoch))
@@ -330,7 +324,7 @@ for epoch in range(opts.epochs):
         print("time up", epoch)
         break
 
-    if epoch >= 2 and (num_sample_white_pixels < 100000 or
+    if epoch >= 1 and (num_sample_white_pixels < 100000 or
                        num_sample_black_pixels < 100000):
         print("model collapse?", epoch)
         break

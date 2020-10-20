@@ -101,7 +101,7 @@ class DecoderBlock(objax.Module):
 class Generator(objax.Module):
     def __init__(self):
 
-        num_channels = 3
+        num_channels = 4  # 3 from RGB_t1 + 1 from dither_t0
 
         self.encoders = objax.ModuleList()
         k = 7
@@ -120,10 +120,15 @@ class Generator(objax.Module):
         self.logits = Conv2D(num_channels, nout=1,
                              strides=1, k=1, w_init=xavier_normal)
 
-    def __call__(self, img):
-        y = img.transpose((0, 3, 1, 2))
+    def __call__(self, rgb_img_t1, dither_t0):
+        rgb_img_t1 = rgb_img_t1.transpose((0, 3, 1, 2))
+        dither_t0 = dither_t0.transpose((0, 3, 1, 2))
+        y = jnp.concatenate([rgb_img_t1, dither_t0], axis=1)
+
         if DEBUG:
-            print("img", y.shape)
+            print("rgb_img_t1", rgb_img_t1.shape)
+            print("dither_t0", dither_t0.shape)
+            print("y", y.shape)
 
         encoded = []
         for e_idx, encoder in enumerate(self.encoders):
