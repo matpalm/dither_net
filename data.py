@@ -21,9 +21,7 @@ def parse_full_size(fname):
 
 def parse_t0_t1(fname_t0, fname_t1, patch_size, crops_per_img=64):
     # parse RGB and dither for two frames; used to train generator
-    # returns rgb_t1, dither_t0, dither_t1
-    # note * we don't use rgb_t0,
-    #      * and D doesn't need dither_t0
+    # returns rgb_t1, dither_t0, dither_t1 (note we don't use rgb_t0)
 
     _rgb_img_t0, true_dither_t0 = parse_full_size(fname_t0)
     rgb_img_t1, true_dither_t1 = parse_full_size(fname_t1)
